@@ -1,3 +1,1 @@
-"""
-Test suite for Multi-Agent Document Framework.
-"""
+"""Test suite for Multi-Agent Document Framework."""
