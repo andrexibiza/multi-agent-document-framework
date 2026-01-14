@@ -1,215 +1,181 @@
-"""
-Message bus for inter-agent communication.
-"""
+"""Message bus for inter-agent communication."""
 
 import asyncio
-import logging
+from dataclasses import dataclass, field
 from typing import Dict, List, Callable, Any, Optional
-from collections import defaultdict
-from dataclasses import dataclass
-import heapq
-
-from madf.models import Message, MessageType
+from enum import Enum
+from datetime import datetime
+import logging
 
 logger = logging.getLogger(__name__)
 
 
+class MessageType(Enum):
+    """Types of messages in the system."""
+    TASK_ASSIGNMENT = "task_assignment"
+    TASK_COMPLETE = "task_complete"
+    TASK_FAILED = "task_failed"
+    AGENT_STATUS = "agent_status"
+    QUALITY_REPORT = "quality_report"
+    COORDINATION_REQUEST = "coordination_request"
+    STAGE_COMPLETE = "stage_complete"
+    ERROR = "error"
+
+
 @dataclass
-class QueuedMessage:
-    """Message with priority for queue"""
-    priority: int
-    message: Message
+class Message:
+    """
+    Represents a message in the system.
     
-    def __lt__(self, other):
-        return self.priority < other.priority
+    Attributes:
+        type: Message type
+        data: Message payload
+        sender: Message sender ID
+        recipient: Optional specific recipient
+        timestamp: Message creation time
+        id: Unique message ID
+    """
+    type: MessageType
+    data: Dict[str, Any]
+    sender: Optional[str] = None
+    recipient: Optional[str] = None
+    timestamp: datetime = field(default_factory=datetime.now)
+    id: str = field(default_factory=lambda: str(asyncio.current_task()))
 
 
 class MessageBus:
     """
-    Asynchronous message bus for agent communication.
+    Event-driven message bus for agent communication.
     
-    Features:
-    - Pub/sub messaging
-    - Priority queuing
-    - Message routing
+    Implements publish/subscribe pattern for:
+    - Asynchronous message delivery
+    - Topic-based routing
+    - Message filtering
     - Delivery guarantees
-    - Dead letter queue
+    
+    Example:
+        >>> bus = MessageBus()
+        >>> await bus.subscribe(MessageType.TASK_COMPLETE, handler)
+        >>> await bus.publish(Message(MessageType.TASK_COMPLETE, data={}))
     """
     
     def __init__(self):
-        self.subscribers: Dict[str, List[Callable]] = defaultdict(list)
-        self.message_queues: Dict[str, asyncio.PriorityQueue] = {}
-        self.agents: Dict[str, Any] = {}
+        """Initialize message bus."""
+        self.subscribers: Dict[MessageType, List[Callable]] = {}
+        self.message_queue: asyncio.Queue = asyncio.Queue()
         self.running = False
-        self.tasks: List[asyncio.Task] = []
-        self.dead_letter_queue: List[Message] = []
-        self.message_history: List[Message] = []
-        self.max_history = 1000
-        
+        self._processor_task: Optional[asyncio.Task] = None
         logger.info("MessageBus initialized")
     
-    def register_agent(self, agent_name: str, agent: Any):
-        """
-        Register an agent with the message bus.
-        
-        Args:
-            agent_name: Unique identifier for the agent
-            agent: Agent instance
-        """
-        self.agents[agent_name] = agent
-        self.message_queues[agent_name] = asyncio.PriorityQueue()
-        
-        logger.debug(f"Registered agent: {agent_name}")
+    async def start(self):
+        """Start message processing."""
+        if not self.running:
+            self.running = True
+            self._processor_task = asyncio.create_task(self._process_messages())
+            logger.info("MessageBus started")
     
-    def subscribe(self, topic: str, callback: Callable):
+    async def stop(self):
+        """Stop message processing."""
+        self.running = False
+        if self._processor_task:
+            self._processor_task.cancel()
+            try:
+                await self._processor_task
+            except asyncio.CancelledError:
+                pass
+        logger.info("MessageBus stopped")
+    
+    def subscribe(self, message_type: MessageType, handler: Callable[[Message], None]):
         """
-        Subscribe to messages on a topic.
+        Subscribe to messages of a specific type.
         
         Args:
-            topic: Topic to subscribe to
-            callback: Async function to call when message received
+            message_type: Type of messages to subscribe to
+            handler: Async function to handle messages
         """
-        self.subscribers[topic].append(callback)
-        logger.debug(f"New subscription to topic: {topic}")
+        if message_type not in self.subscribers:
+            self.subscribers[message_type] = []
+        self.subscribers[message_type].append(handler)
+        logger.debug(f"Subscribed handler to {message_type}")
+    
+    def unsubscribe(self, message_type: MessageType, handler: Callable[[Message], None]):
+        """
+        Unsubscribe from messages.
+        
+        Args:
+            message_type: Message type
+            handler: Handler to remove
+        """
+        if message_type in self.subscribers:
+            try:
+                self.subscribers[message_type].remove(handler)
+                logger.debug(f"Unsubscribed handler from {message_type}")
+            except ValueError:
+                pass
     
     async def publish(self, message: Message):
         """
-        Publish a message to the bus.
+        Publish a message to subscribers.
         
         Args:
             message: Message to publish
         """
-        # Store in history
-        self.message_history.append(message)
-        if len(self.message_history) > self.max_history:
-            self.message_history.pop(0)
-        
-        # Route to recipient if specified
-        if message.recipient:
-            await self._route_to_agent(message)
-        
-        # Notify subscribers
-        topic = message.type.value
-        if topic in self.subscribers:
-            for callback in self.subscribers[topic]:
-                try:
-                    await callback(message)
-                except Exception as e:
-                    logger.error(f"Subscriber callback error: {e}")
-        
-        logger.debug(f"Published message: {message.id} from {message.sender} to {message.recipient}")
+        await self.message_queue.put(message)
+        logger.debug(f"Published message: {message.type}")
     
-    async def _route_to_agent(self, message: Message):
+    async def _process_messages(self):
         """
-        Route message to specific agent's queue.
+        Process messages from queue.
+        
+        Runs continuously while the bus is active.
         """
-        if message.recipient not in self.message_queues:
-            logger.warning(f"Unknown recipient: {message.recipient}")
-            self.dead_letter_queue.append(message)
+        while self.running:
+            try:
+                message = await asyncio.wait_for(
+                    self.message_queue.get(),
+                    timeout=1.0
+                )
+                await self._deliver_message(message)
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error(f"Error processing message: {e}")
+    
+    async def _deliver_message(self, message: Message):
+        """
+        Deliver message to subscribers.
+        
+        Args:
+            message: Message to deliver
+        """
+        handlers = self.subscribers.get(message.type, [])
+        
+        if not handlers:
+            logger.debug(f"No handlers for message type: {message.type}")
             return
         
-        queue = self.message_queues[message.recipient]
-        queued_msg = QueuedMessage(priority=-message.priority, message=message)
-        await queue.put(queued_msg)
+        # Deliver to all subscribers
+        for handler in handlers:
+            try:
+                if asyncio.iscoroutinefunction(handler):
+                    await handler(message)
+                else:
+                    handler(message)
+            except Exception as e:
+                logger.error(f"Error in message handler: {e}")
     
-    async def send(self, 
-                   sender: str,
-                   recipient: str,
-                   message_type: MessageType,
-                   payload: Dict[str, Any],
-                   priority: int = 0) -> Message:
+    def get_stats(self) -> Dict[str, Any]:
         """
-        Send a message to a specific recipient.
-        
-        Args:
-            sender: Sender agent name
-            recipient: Recipient agent name
-            message_type: Type of message
-            payload: Message payload
-            priority: Message priority (higher = more urgent)
+        Get message bus statistics.
         
         Returns:
-            The created message
+            Statistics dictionary
         """
-        message = Message(
-            type=message_type,
-            sender=sender,
-            recipient=recipient,
-            payload=payload,
-            priority=priority
-        )
-        
-        await self.publish(message)
-        return message
-    
-    async def receive(self, agent_name: str, timeout: Optional[float] = None) -> Optional[Message]:
-        """
-        Receive next message for an agent.
-        
-        Args:
-            agent_name: Name of agent receiving message
-            timeout: Optional timeout in seconds
-        
-        Returns:
-            Next message or None if timeout
-        """
-        if agent_name not in self.message_queues:
-            logger.warning(f"Agent not registered: {agent_name}")
-            return None
-        
-        queue = self.message_queues[agent_name]
-        
-        try:
-            if timeout:
-                queued_msg = await asyncio.wait_for(queue.get(), timeout=timeout)
-            else:
-                queued_msg = await queue.get()
-            
-            return queued_msg.message
-        
-        except asyncio.TimeoutError:
-            return None
-    
-    def get_queue_size(self, agent_name: str) -> int:
-        """
-        Get number of pending messages for an agent.
-        """
-        if agent_name not in self.message_queues:
-            return 0
-        return self.message_queues[agent_name].qsize()
-    
-    def get_message_history(self, limit: int = 100) -> List[Message]:
-        """
-        Get recent message history.
-        """
-        return self.message_history[-limit:]
-    
-    def get_dead_letters(self) -> List[Message]:
-        """
-        Get undeliverable messages.
-        """
-        return self.dead_letter_queue.copy()
-    
-    async def close(self):
-        """
-        Close the message bus and cleanup resources.
-        """
-        logger.info("Closing MessageBus")
-        
-        # Cancel all tasks
-        for task in self.tasks:
-            task.cancel()
-        
-        # Wait for tasks to complete
-        if self.tasks:
-            await asyncio.gather(*self.tasks, return_exceptions=True)
-        
-        # Clear queues
-        for queue in self.message_queues.values():
-            while not queue.empty():
-                try:
-                    queue.get_nowait()
-                except asyncio.QueueEmpty:
-                    break
-        
-        logger.info("MessageBus closed")
+        return {
+            'running': self.running,
+            'queue_size': self.message_queue.qsize(),
+            'subscriber_counts': {
+                msg_type.value: len(handlers)
+                for msg_type, handlers in self.subscribers.items()
+            }
+        }

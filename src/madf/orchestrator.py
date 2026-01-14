@@ -1,580 +1,424 @@
-"""
-Document Orchestrator - Main coordination system for multi-agent document creation.
-"""
+"""Document Orchestrator - Central coordination for multi-agent document creation."""
 
 import asyncio
 import logging
-from typing import Dict, List, Optional, Any
-from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, List
 from datetime import datetime
-from enum import Enum
 import uuid
 
-from madf.agents.base import BaseAgent
-from madf.models import Task, Result, Document, Context
-from madf.coordination.message_bus import MessageBus
-from madf.coordination.state_manager import StateManager
-from madf.workflows.executor import WorkflowExecutor
-from madf.verification.quality_checker import QualityChecker
+from .models.document import Document, DocumentSection, DocumentStatus
+from .models.request import DocumentRequest
+from .models.task import Task, TaskResult
+from .agents.research import ResearchAgent
+from .agents.writing import WritingAgent
+from .agents.editing import EditingAgent
+from .agents.verification import VerificationAgent
+from .coordination.workflow import WorkflowManager, Stage
+from .coordination.message_bus import MessageBus, Message, MessageType
+from .coordination.resource_manager import ResourceManager
+from .utils.config import OrchestratorConfig, AgentConfig, ModelConfig
+from .storage.state_store import StateStore
 
 logger = logging.getLogger(__name__)
 
 
-class WorkflowStage(Enum):
-    """Workflow execution stages"""
-    INITIALIZING = "initializing"
-    RESEARCHING = "researching"
-    WRITING = "writing"
-    EDITING = "editing"
-    VERIFYING = "verifying"
-    ITERATING = "iterating"
-    FINALIZING = "finalizing"
-    COMPLETED = "completed"
-    FAILED = "failed"
-
-
-@dataclass
-class OrchestratorConfig:
-    """Configuration for document orchestrator"""
-    max_iterations: int = 3
-    quality_threshold: float = 0.85
-    enable_verification: bool = True
-    enable_parallel_processing: bool = True
-    timeout_seconds: int = 600
-    enable_caching: bool = True
-    log_level: str = "INFO"
-    
-    # Agent-specific timeouts
-    research_timeout: int = 120
-    writing_timeout: int = 180
-    editing_timeout: int = 120
-    verification_timeout: int = 60
-
-
-@dataclass
-class DocumentRequest:
-    """Request for document creation"""
-    request_id: str = field(default_factory=lambda: str(uuid.uuid4()))
-    topic: str = ""
-    requirements: Dict[str, Any] = field(default_factory=dict)
-    context: Optional[Dict[str, Any]] = None
-    priority: int = 0
-    created_at: datetime = field(default_factory=datetime.now)
-
-
-@dataclass
-class DocumentResult:
-    """Result of document creation"""
-    document_id: str
-    success: bool
-    content: str
-    quality_score: float
-    iterations: int
-    metadata: Dict[str, Any]
-    metrics: Dict[str, Any]
-    errors: Optional[List[str]] = None
-    created_at: datetime = field(default_factory=datetime.now)
-
-
 class DocumentOrchestrator:
     """
-    Main orchestrator for coordinating multiple agents to create documents.
+    Central orchestrator for multi-agent document creation.
     
-    Responsibilities:
-    - Manage agent lifecycle
-    - Coordinate workflow execution
-    - Handle quality control
-    - Manage iterations and feedback
-    - Monitor performance
-    - Handle errors and recovery
+    Coordinates research, writing, editing, and verification agents
+    to produce high-quality documents through a structured workflow.
+    
+    Architecture:
+    - Workflow management and execution
+    - Agent coordination and communication
+    - Resource allocation and optimization
+    - State management and persistence
+    - Error handling and recovery
+    
+    Example:
+        >>> config = OrchestratorConfig(
+        ...     max_agents=10,
+        ...     quality_threshold=0.85
+        ... )
+        >>> orchestrator = DocumentOrchestrator(config)
+        >>> request = DocumentRequest(
+        ...     topic="The Future of AI",
+        ...     document_type="article",
+        ...     target_length=2000
+        ... )
+        >>> document = await orchestrator.create_document(request)
     """
     
-    def __init__(self,
-                 agents: Dict[str, BaseAgent],
-                 config: Optional[OrchestratorConfig] = None):
+    def __init__(self, config: OrchestratorConfig):
         """
-        Initialize orchestrator with agents and configuration.
+        Initialize the document orchestrator.
         
         Args:
-            agents: Dictionary mapping agent roles to agent instances
-                   Expected keys: 'research', 'writing', 'editing', 'verification'
             config: Orchestrator configuration
         """
-        self.agents = agents
-        self.config = config or OrchestratorConfig()
-        
-        # Initialize subsystems
+        self.config = config
+        self.workflow_manager = WorkflowManager()
+        self.resource_manager = ResourceManager(config.max_agents)
         self.message_bus = MessageBus()
-        self.state_manager = StateManager()
-        self.quality_checker = QualityChecker()
-        self.workflow_executor = WorkflowExecutor(
-            agents=agents,
-            message_bus=self.message_bus,
-            state_manager=self.state_manager
+        self.state_store = StateStore()
+        
+        # Initialize agents
+        self._init_agents()
+        
+        logger.info("DocumentOrchestrator initialized")
+    
+    def _init_agents(self):
+        """Initialize all specialized agents."""
+        # Create default configs if not provided
+        default_model_config = ModelConfig(model="gpt-4", temperature=0.7)
+        
+        research_config = self.config.research_config or AgentConfig(
+            name="research",
+            model_config=ModelConfig(model="gpt-4", temperature=0.3)
+        )
+        writing_config = self.config.writing_config or AgentConfig(
+            name="writing",
+            model_config=ModelConfig(model="gpt-4", temperature=0.7)
+        )
+        editing_config = self.config.editing_config or AgentConfig(
+            name="editing",
+            model_config=ModelConfig(model="gpt-4", temperature=0.5)
+        )
+        verification_config = self.config.verification_config or AgentConfig(
+            name="verification",
+            model_config=ModelConfig(model="gpt-4", temperature=0.2)
         )
         
-        # Setup logging
-        logging.basicConfig(
-            level=getattr(logging, self.config.log_level),
-            format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-        )
+        # Create agent instances
+        self.agents = {
+            'research': ResearchAgent(research_config),
+            'writing': WritingAgent(writing_config),
+            'editing': EditingAgent(editing_config),
+            'verification': VerificationAgent(verification_config)
+        }
         
-        # Register agents with message bus
-        self._register_agents()
-        
-        logger.info("DocumentOrchestrator initialized with %d agents", len(agents))
+        logger.info(f"Initialized {len(self.agents)} agents")
     
-    def _register_agents(self):
-        """Register agents with message bus for communication"""
-        for agent_name, agent in self.agents.items():
-            self.message_bus.register_agent(agent_name, agent)
-            logger.debug(f"Registered agent: {agent_name}")
-    
-    async def create_document(self,
-                             topic: str,
-                             requirements: Dict[str, Any]) -> DocumentResult:
+    async def create_document(self, request: DocumentRequest) -> Document:
         """
-        Create a document using multi-agent collaboration.
+        Create a document from a request.
+        
+        This is the main entry point for document creation. It:
+        1. Validates the request
+        2. Creates a workflow
+        3. Executes the workflow stages
+        4. Verifies quality
+        5. Returns the final document
         
         Args:
-            topic: Main topic/subject of the document
-            requirements: Dictionary containing:
-                - length: Target word count (e.g., "2000-3000 words")
-                - tone: Writing tone (e.g., "professional", "casual")
-                - style: Writing style (e.g., "technical", "narrative")
-                - target_audience: Intended audience
-                - include_citations: Whether to include citations
-                - other custom requirements
-        
+            request: Document creation request
+            
         Returns:
-            DocumentResult containing the generated document and metadata
+            Completed document
+            
+        Raises:
+            ValueError: If request is invalid
+            RuntimeError: If document creation fails
         """
-        request = DocumentRequest(
-            topic=topic,
-            requirements=requirements
+        # Validate request
+        request.validate()
+        
+        # Generate document ID
+        doc_id = str(uuid.uuid4())
+        
+        logger.info(f"Starting document creation: {doc_id}")
+        logger.info(f"Topic: {request.topic}")
+        logger.info(f"Type: {request.document_type}")
+        
+        # Initialize document
+        document = Document(
+            id=doc_id,
+            title=request.topic,
+            sections=[],
+            status=DocumentStatus.PENDING,
+            metadata={'request': request.__dict__}
         )
         
-        logger.info(f"Starting document creation: {request.request_id}")
-        logger.debug(f"Topic: {topic}")
-        logger.debug(f"Requirements: {requirements}")
+        # Save initial state
+        await self.state_store.save_document(document)
         
         try:
-            # Initialize document state
-            document_id = await self._initialize_document(request)
+            # Create and execute workflow
+            workflow = self.workflow_manager.create_workflow(request)
             
-            # Execute workflow with iterations
-            final_result = await self._execute_workflow_with_iterations(
-                document_id,
-                request
-            )
+            # Execute workflow stages
+            workflow_result = await self._execute_workflow(workflow, request, document)
             
-            # Finalize document
-            document_result = await self._finalize_document(
-                document_id,
-                final_result
-            )
+            # Update document from workflow result
+            document = await self._finalize_document(workflow_result, document)
             
-            logger.info(
-                f"Document creation completed: {document_id}, "
-                f"Quality: {document_result.quality_score:.3f}, "
-                f"Iterations: {document_result.iterations}"
-            )
-            
-            return document_result
-            
-        except Exception as e:
-            logger.error(f"Document creation failed: {str(e)}", exc_info=True)
-            
-            return DocumentResult(
-                document_id=request.request_id,
-                success=False,
-                content="",
-                quality_score=0.0,
-                iterations=0,
-                metadata={"error": str(e)},
-                metrics={},
-                errors=[str(e)]
-            )
-    
-    async def _initialize_document(self, request: DocumentRequest) -> str:
-        """
-        Initialize document state and prepare for creation.
-        """
-        document_id = request.request_id
-        
-        # Create initial state
-        await self.state_manager.create_document_state(
-            document_id=document_id,
-            topic=request.topic,
-            requirements=request.requirements,
-            context=request.context or {}
-        )
-        
-        logger.debug(f"Initialized document state: {document_id}")
-        return document_id
-    
-    async def _execute_workflow_with_iterations(self,
-                                                document_id: str,
-                                                request: DocumentRequest) -> Dict[str, Any]:
-        """
-        Execute workflow with quality-based iterations.
-        """
-        iteration = 0
-        best_result = None
-        best_score = 0.0
-        feedback_history = []
-        
-        while iteration < self.config.max_iterations:
-            iteration += 1
-            logger.info(f"Starting iteration {iteration}/{self.config.max_iterations}")
-            
-            # Update state
-            await self.state_manager.update_stage(
-                document_id,
-                WorkflowStage.RESEARCHING if iteration == 1 else WorkflowStage.ITERATING
-            )
-            
-            # Execute workflow
-            result = await self._execute_single_workflow(
-                document_id,
-                request,
-                iteration,
-                feedback_history
-            )
-            
-            # Check quality
-            quality_score = result.get('quality_score', 0.0)
-            
-            logger.info(f"Iteration {iteration} quality score: {quality_score:.3f}")
-            
-            # Track best result
-            if quality_score > best_score:
-                best_result = result
-                best_score = quality_score
-            
-            # Check if quality threshold met
-            if quality_score >= self.config.quality_threshold:
-                logger.info(f"Quality threshold met: {quality_score:.3f} >= {self.config.quality_threshold}")
-                break
-            
-            # Prepare feedback for next iteration
-            if iteration < self.config.max_iterations:
-                feedback = result.get('verification', {}).get('feedback', {})
-                feedback_history.append({
-                    'iteration': iteration,
-                    'score': quality_score,
-                    'feedback': feedback
-                })
-                logger.debug(f"Feedback for next iteration: {feedback}")
-        
-        # Use best result if threshold never met
-        if best_result:
-            best_result['iterations'] = iteration
-            best_result['quality_score'] = best_score
-        
-        return best_result or {
-            'success': False,
-            'error': 'No successful workflow execution',
-            'iterations': iteration
-        }
-    
-    async def _execute_single_workflow(self,
-                                      document_id: str,
-                                      request: DocumentRequest,
-                                      iteration: int,
-                                      feedback_history: List[Dict]) -> Dict[str, Any]:
-        """
-        Execute a single workflow iteration.
-        """
-        workflow_result = {
-            'success': False,
-            'research': None,
-            'draft': None,
-            'edited': None,
-            'verification': None,
-            'quality_score': 0.0
-        }
-        
-        try:
-            # Stage 1: Research
-            logger.info("Stage 1: Research")
-            await self.state_manager.update_stage(document_id, WorkflowStage.RESEARCHING)
-            
-            research_result = await self._execute_research(
-                document_id,
-                request,
-                feedback_history
-            )
-            workflow_result['research'] = research_result
-            
-            if not research_result.get('success'):
-                raise Exception("Research stage failed")
-            
-            # Stage 2: Writing
-            logger.info("Stage 2: Writing")
-            await self.state_manager.update_stage(document_id, WorkflowStage.WRITING)
-            
-            writing_result = await self._execute_writing(
-                document_id,
-                research_result,
-                request,
-                feedback_history
-            )
-            workflow_result['draft'] = writing_result
-            
-            if not writing_result.get('success'):
-                raise Exception("Writing stage failed")
-            
-            # Stage 3: Editing
-            logger.info("Stage 3: Editing")
-            await self.state_manager.update_stage(document_id, WorkflowStage.EDITING)
-            
-            editing_result = await self._execute_editing(
-                document_id,
-                writing_result,
-                request,
-                feedback_history
-            )
-            workflow_result['edited'] = editing_result
-            
-            if not editing_result.get('success'):
-                raise Exception("Editing stage failed")
-            
-            # Stage 4: Verification (if enabled)
-            if self.config.enable_verification:
-                logger.info("Stage 4: Verification")
-                await self.state_manager.update_stage(document_id, WorkflowStage.VERIFYING)
-                
-                verification_result = await self._execute_verification(
-                    document_id,
-                    editing_result,
-                    research_result,
-                    request
+            # Final verification
+            if document.quality_score < self.config.quality_threshold:
+                logger.warning(
+                    f"Document quality {document.quality_score} below threshold "
+                    f"{self.config.quality_threshold}. Consider refinement."
                 )
-                workflow_result['verification'] = verification_result
-                workflow_result['quality_score'] = verification_result.get('overall_score', 0.0)
-            else:
-                workflow_result['quality_score'] = 0.85  # Default if verification disabled
             
-            workflow_result['success'] = True
+            document.status = DocumentStatus.COMPLETE
+            await self.state_store.save_document(document)
+            
+            logger.info(f"Document creation completed: {doc_id}")
+            logger.info(f"Quality score: {document.quality_score}")
+            logger.info(f"Word count: {document.word_count}")
+            
+            return document
             
         except Exception as e:
-            logger.error(f"Workflow execution failed: {str(e)}", exc_info=True)
-            workflow_result['error'] = str(e)
-        
-        return workflow_result
+            logger.error(f"Document creation failed: {str(e)}")
+            document.status = DocumentStatus.FAILED
+            await self.state_store.save_document(document)
+            raise RuntimeError(f"Failed to create document: {str(e)}")
     
-    async def _execute_research(self,
-                               document_id: str,
+    async def _execute_workflow(self, 
+                               workflow: 'Workflow', 
                                request: DocumentRequest,
-                               feedback_history: List[Dict]) -> Dict[str, Any]:
+                               document: Document) -> Dict[str, Any]:
         """
-        Execute research stage.
+        Execute workflow stages.
+        
+        Args:
+            workflow: Workflow to execute
+            request: Document request
+            document: Document being created
+            
+        Returns:
+            Workflow execution results
         """
-        research_agent = self.agents.get('research')
-        if not research_agent:
-            raise ValueError("Research agent not found")
-        
-        # Prepare research task
-        task = Task(
-            task_id=f"{document_id}_research",
-            task_type="research",
-            payload={
-                'topic': request.topic,
-                'requirements': request.requirements,
-                'feedback': feedback_history
-            },
-            context={}
-        )
-        
-        # Execute with timeout
-        try:
-            result = await asyncio.wait_for(
-                research_agent.handle_task(task),
-                timeout=self.config.research_timeout
-            )
-            return {
-                'success': result.success,
-                'context': result.output,
-                'metrics': result.metrics
-            }
-        except asyncio.TimeoutError:
-            logger.error("Research stage timed out")
-            return {'success': False, 'error': 'Timeout'}
-    
-    async def _execute_writing(self,
-                              document_id: str,
-                              research_result: Dict,
-                              request: DocumentRequest,
-                              feedback_history: List[Dict]) -> Dict[str, Any]:
-        """
-        Execute writing stage.
-        """
-        writing_agent = self.agents.get('writing')
-        if not writing_agent:
-            raise ValueError("Writing agent not found")
-        
-        task = Task(
-            task_id=f"{document_id}_writing",
-            task_type="writing",
-            payload={
-                'research_context': research_result['context'],
-                'requirements': request.requirements,
-                'feedback': feedback_history
-            },
-            context={}
-        )
-        
-        try:
-            result = await asyncio.wait_for(
-                writing_agent.handle_task(task),
-                timeout=self.config.writing_timeout
-            )
-            return {
-                'success': result.success,
-                'document': result.output.get('document', ''),
-                'outline': result.output.get('outline', {}),
-                'metrics': result.metrics
-            }
-        except asyncio.TimeoutError:
-            logger.error("Writing stage timed out")
-            return {'success': False, 'error': 'Timeout'}
-    
-    async def _execute_editing(self,
-                              document_id: str,
-                              writing_result: Dict,
-                              request: DocumentRequest,
-                              feedback_history: List[Dict]) -> Dict[str, Any]:
-        """
-        Execute editing stage.
-        """
-        editing_agent = self.agents.get('editing')
-        if not editing_agent:
-            raise ValueError("Editing agent not found")
-        
-        task = Task(
-            task_id=f"{document_id}_editing",
-            task_type="editing",
-            payload={
-                'document': writing_result['document'],
-                'requirements': request.requirements,
-                'feedback': feedback_history
-            },
-            context={}
-        )
-        
-        try:
-            result = await asyncio.wait_for(
-                editing_agent.handle_task(task),
-                timeout=self.config.editing_timeout
-            )
-            return {
-                'success': result.success,
-                'document': result.output.get('edited_document', ''),
-                'changes': result.output.get('changes', []),
-                'metrics': result.metrics
-            }
-        except asyncio.TimeoutError:
-            logger.error("Editing stage timed out")
-            return {'success': False, 'error': 'Timeout'}
-    
-    async def _execute_verification(self,
-                                   document_id: str,
-                                   editing_result: Dict,
-                                   research_result: Dict,
-                                   request: DocumentRequest) -> Dict[str, Any]:
-        """
-        Execute verification stage.
-        """
-        verification_agent = self.agents.get('verification')
-        if not verification_agent:
-            raise ValueError("Verification agent not found")
-        
-        task = Task(
-            task_id=f"{document_id}_verification",
-            task_type="verification",
-            payload={
-                'document': editing_result['document'],
-                'research_context': research_result['context'],
-                'requirements': request.requirements,
-                'quality_threshold': self.config.quality_threshold
-            },
-            context={}
-        )
-        
-        try:
-            result = await asyncio.wait_for(
-                verification_agent.handle_task(task),
-                timeout=self.config.verification_timeout
-            )
-            return result.output
-        except asyncio.TimeoutError:
-            logger.error("Verification stage timed out")
-            return {'overall_score': 0.0, 'error': 'Timeout'}
-    
-    async def _finalize_document(self,
-                                document_id: str,
-                                workflow_result: Dict[str, Any]) -> DocumentResult:
-        """
-        Finalize document and prepare result.
-        """
-        await self.state_manager.update_stage(document_id, WorkflowStage.FINALIZING)
-        
-        # Extract final document
-        final_content = ""
-        if workflow_result.get('edited', {}).get('document'):
-            final_content = workflow_result['edited']['document']
-        elif workflow_result.get('draft', {}).get('document'):
-            final_content = workflow_result['draft']['document']
-        
-        # Compile metrics
-        metrics = {
-            'research_metrics': workflow_result.get('research', {}).get('metrics', {}),
-            'writing_metrics': workflow_result.get('draft', {}).get('metrics', {}),
-            'editing_metrics': workflow_result.get('edited', {}).get('metrics', {}),
-            'iterations': workflow_result.get('iterations', 0)
+        workflow_context = {
+            'request': request,
+            'document': document
         }
         
-        # Compile metadata
-        metadata = {
-            'outline': workflow_result.get('draft', {}).get('outline', {}),
-            'changes': workflow_result.get('edited', {}).get('changes', []),
-            'verification': workflow_result.get('verification', {}),
-            'created_at': datetime.now().isoformat()
+        for stage in workflow.stages:
+            logger.info(f"Executing stage: {stage.name}")
+            document.status = self._get_status_for_stage(stage.name)
+            await self.state_store.save_document(document)
+            
+            stage_result = await self._execute_stage(stage, workflow_context)
+            workflow_context[stage.name] = stage_result
+            
+            # Publish stage completion
+            await self.message_bus.publish(Message(
+                type=MessageType.STAGE_COMPLETE,
+                data={
+                    'stage': stage.name,
+                    'document_id': document.id
+                }
+            ))
+        
+        return workflow_context
+    
+    async def _execute_stage(self, stage: Stage, context: Dict[str, Any]) -> Any:
+        """
+        Execute a single workflow stage.
+        
+        Args:
+            stage: Stage to execute
+            context: Workflow context
+            
+        Returns:
+            Stage execution result
+        """
+        agent_type = stage.agent_type
+        agent = self.agents.get(agent_type)
+        
+        if not agent:
+            raise ValueError(f"Unknown agent type: {agent_type}")
+        
+        # Create task for agent
+        task = self._create_task_for_stage(stage, context)
+        
+        # Execute task
+        result = await agent.execute(task)
+        
+        if not result.success:
+            raise RuntimeError(f"Stage {stage.name} failed: {result.error}")
+        
+        return result.data
+    
+    def _create_task_for_stage(self, stage: Stage, context: Dict[str, Any]) -> Task:
+        """
+        Create task for a workflow stage.
+        
+        Args:
+            stage: Workflow stage
+            context: Workflow context
+            
+        Returns:
+            Task for agent execution
+        """
+        request = context['request']
+        
+        if stage.name == 'research':
+            return Task(
+                id=str(uuid.uuid4()),
+                type='research',
+                data={
+                    'query': request.topic,
+                    'depth': 'deep',
+                    'requirements': request.requirements
+                }
+            )
+        
+        elif stage.name == 'writing':
+            research_data = context.get('research', {})
+            return Task(
+                id=str(uuid.uuid4()),
+                type='writing',
+                data={
+                    'type': 'full',
+                    'research_brief': research_data.get('research_brief'),
+                    'requirements': {
+                        'document_type': request.document_type,
+                        'target_length': request.target_length,
+                        'style': request.style,
+                        'audience': request.audience
+                    }
+                }
+            )
+        
+        elif stage.name == 'editing':
+            writing_data = context.get('writing', {})
+            sections = writing_data.get('sections', [])
+            full_content = "\n\n".join([s['content'] for s in sections])
+            
+            return Task(
+                id=str(uuid.uuid4()),
+                type='editing',
+                data={
+                    'content': full_content,
+                    'style_guide': {'style': request.style}
+                }
+            )
+        
+        elif stage.name == 'verification':
+            editing_data = context.get('editing', {})
+            research_data = context.get('research', {})
+            
+            return Task(
+                id=str(uuid.uuid4()),
+                type='verification',
+                data={
+                    'document': editing_data.get('edited_content'),
+                    'requirements': {
+                        'target_length': request.target_length,
+                        'requirements': request.requirements
+                    },
+                    'research_brief': research_data.get('research_brief')
+                }
+            )
+        
+        else:
+            raise ValueError(f"Unknown stage: {stage.name}")
+    
+    async def _finalize_document(self, 
+                                workflow_result: Dict[str, Any],
+                                document: Document) -> Document:
+        """
+        Finalize document from workflow results.
+        
+        Args:
+            workflow_result: Results from workflow execution
+            document: Document to finalize
+            
+        Returns:
+            Finalized document
+        """
+        # Extract final content
+        editing_data = workflow_result.get('editing', {})
+        final_content = editing_data.get('edited_content', '')
+        
+        # Create document sections
+        sections = self._split_into_sections(final_content)
+        document.sections = sections
+        
+        # Extract quality score
+        verification_data = workflow_result.get('verification', {})
+        verification_report = verification_data.get('verification_report', {})
+        document.quality_score = verification_report.get('overall_score', 0.0)
+        
+        # Update word count
+        document.update_word_count()
+        document.updated_at = datetime.now()
+        
+        return document
+    
+    def _split_into_sections(self, content: str) -> List[DocumentSection]:
+        """
+        Split content into sections.
+        
+        Args:
+            content: Full document content
+            
+        Returns:
+            List of document sections
+        """
+        # Simple section splitting based on headers
+        # Can be made more sophisticated
+        sections = []
+        current_section = None
+        order = 0
+        
+        for line in content.split('\n'):
+            # Check if line is a header (starts with # or is all caps)
+            if line.startswith('#') or (line.isupper() and len(line) > 3):
+                if current_section:
+                    sections.append(current_section)
+                current_section = DocumentSection(
+                    title=line.strip('#').strip(),
+                    content='',
+                    order=order
+                )
+                order += 1
+            elif current_section:
+                current_section.content += line + '\n'
+        
+        if current_section:
+            sections.append(current_section)
+        
+        # If no sections found, create single section
+        if not sections:
+            sections = [DocumentSection(
+                title="Content",
+                content=content,
+                order=0
+            )]
+        
+        return sections
+    
+    def _get_status_for_stage(self, stage_name: str) -> DocumentStatus:
+        """Map stage name to document status."""
+        status_map = {
+            'research': DocumentStatus.RESEARCHING,
+            'writing': DocumentStatus.WRITING,
+            'editing': DocumentStatus.EDITING,
+            'verification': DocumentStatus.VERIFYING
         }
+        return status_map.get(stage_name, DocumentStatus.PENDING)
+    
+    async def get_document(self, document_id: str) -> Optional[Document]:
+        """
+        Retrieve a document by ID.
         
-        # Update final state
-        await self.state_manager.update_stage(document_id, WorkflowStage.COMPLETED)
-        
-        return DocumentResult(
-            document_id=document_id,
-            success=workflow_result.get('success', False),
-            content=final_content,
-            quality_score=workflow_result.get('quality_score', 0.0),
-            iterations=workflow_result.get('iterations', 0),
-            metadata=metadata,
-            metrics=metrics
-        )
+        Args:
+            document_id: Document ID
+            
+        Returns:
+            Document if found, None otherwise
+        """
+        return await self.state_store.get_document(document_id)
     
     def get_agent_metrics(self) -> Dict[str, Any]:
         """
-        Get performance metrics from all agents.
-        """
-        metrics = {}
-        for agent_name, agent in self.agents.items():
-            metrics[agent_name] = agent.get_metrics()
-        return metrics
-    
-    async def shutdown(self):
-        """
-        Gracefully shutdown orchestrator and agents.
-        """
-        logger.info("Shutting down DocumentOrchestrator")
+        Get metrics for all agents.
         
-        # Close message bus
-        await self.message_bus.close()
-        
-        # Cleanup state manager
-        await self.state_manager.close()
-        
-        logger.info("DocumentOrchestrator shutdown complete")
+        Returns:
+            Dictionary of agent metrics
+        """
+        return {name: agent.get_metrics() for name, agent in self.agents.items()}
