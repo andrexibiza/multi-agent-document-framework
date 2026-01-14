@@ -1,19 +1,16 @@
-"""
-Agent implementations for document creation.
-"""
+"""Specialized agents for document creation."""
 
-from madf.agents.base import BaseAgent, AgentStatus, AgentMetrics
-from madf.agents.research import ResearchAgent
-from madf.agents.writing import WritingAgent
-from madf.agents.editing import EditingAgent
-from madf.agents.verification import VerificationAgent
+from .base import BaseAgent, AgentState
+from .research import ResearchAgent
+from .writing import WritingAgent
+from .editing import EditingAgent
+from .verification import VerificationAgent
 
 __all__ = [
-    'BaseAgent',
-    'AgentStatus',
-    'AgentMetrics',
-    'ResearchAgent',
-    'WritingAgent',
-    'EditingAgent',
-    'VerificationAgent'
+    "BaseAgent",
+    "AgentState",
+    "ResearchAgent",
+    "WritingAgent",
+    "EditingAgent",
+    "VerificationAgent",
 ]
