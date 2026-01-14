@@ -1,566 +1,500 @@
-# Coordination Protocol
+# Coordination Protocols
 
 ## Overview
 
-The coordination subsystem enables seamless communication and state management across multiple agents working on document creation. It provides the infrastructure for agents to collaborate effectively without tight coupling.
+The coordination layer manages communication, synchronization, and resource allocation between agents in the Multi-Agent Document Framework.
 
 ## Architecture
 
 ```
-┏━━━━━━━━━━━━━━━━┓     ┏━━━━━━━━━━━━━━━━┓
-┃  Agent Network  ┃     ┃  Orchestrator  ┃
-┗━━━━━━━━┬━━━━━━━┛     ┗━━━━━━━┬━━━━━━━━┛
-         │                     │
-         │                     │
-         └──────┬─────────────┘
-                │
-       ┏━━━━━━━┴━━━━━━━━┓
-       ┃  Message Bus   ┃
-       ┃  (Pub/Sub)     ┃
-       ┗━━━━━━━┬━━━━━━━━┛
-                │
-       ┏━━━━━━━┴━━━━━━━━┓
-       ┃ State Manager ┃
-       ┃  (Shared State)┃
-       ┗━━━━━━━━━━━━━━━━┛
+┌────────────────────────────────────────────────────┐
+│              Orchestrator (Coordinator)                │
+└────────────────┬────────────────────────────────────┘
+                 │
+     ┌───────────┼───────────┐
+     │           │            │
+┌────▼────┐ ┌───▼────┐ ┌──▼───┐
+│Workflow│ │Message│ │Resource│
+│ Manager│ │  Bus  │ │Manager│
+└─────────┘ └─────────┘ └────────┘
+     │           │            │
+     └───────────┼───────────┘
+                 │
+┌────────────────▼────────────────────────────────────┐
+│          Specialized Agents (Workers)               │
+│   Research | Writing | Editing | Verification       │
+└────────────────────────────────────────────────────┘
 ```
 
-## Message Bus
+## Components
 
-### Purpose
+### 1. Workflow Manager
 
-The message bus provides asynchronous, decoupled communication between agents. Instead of agents calling each other directly, they communicate through messages, which provides:
+**Purpose**: Define and execute document creation workflows.
 
-1. **Loose Coupling**: Agents don't need to know about each other's implementation
-2. **Async Communication**: Non-blocking message passing
-3. **Priority Handling**: Important messages can be prioritized
-4. **Reliability**: Messages can be queued and retried
-5. **Observability**: All communication is logged and traceable
+#### Workflow Structure
 
-### Message Types
+```python
+@dataclass
+class Stage:
+    name: str
+    agent_type: str
+    depends_on: List[str]  # Dependencies
+    parallel: bool  # Can run in parallel
+    optional: bool  # Can be skipped
+
+@dataclass
+class Workflow:
+    name: str
+    stages: List[Stage]
+    metadata: Dict
+```
+
+#### Predefined Workflows
+
+**Article Workflow**
+```python
+Workflow(
+    name="article",
+    stages=[
+        Stage("research", "research"),
+        Stage("writing", "writing", depends_on=["research"]),
+        Stage("editing", "editing", depends_on=["writing"]),
+        Stage("verification", "verification", depends_on=["editing"])
+    ]
+)
+```
+
+**Paper Workflow**
+```python
+Workflow(
+    name="paper",
+    stages=[
+        Stage("literature_review", "research"),
+        Stage("methodology", "writing", depends_on=["literature_review"]),
+        Stage("results", "writing", depends_on=["methodology"]),
+        Stage("editing", "editing", depends_on=["results"]),
+        Stage("peer_review", "verification", depends_on=["editing"])
+    ],
+    metadata={'requires_citations': True}
+)
+```
+
+#### Custom Workflow Creation
+
+```python
+# Using WorkflowBuilder
+workflow = (WorkflowBuilder("custom")
+    .add_stage("research", "research")
+    .add_stage("analysis", "data_analysis", depends_on=["research"])
+    .add_stage("writing", "writing", depends_on=["analysis"], parallel=True)
+    .add_stage("verification", "verification", depends_on=["writing"])
+    .set_metadata("custom_field", value)
+    .build())
+
+# Register workflow
+workflow_manager.register_workflow("custom", workflow)
+```
+
+#### Execution Strategy
+
+**Sequential Execution**
+```
+Stage 1 → Stage 2 → Stage 3 → Stage 4
+```
+
+**Parallel Execution**
+```
+Stage 1 → Stage 2a → Stage 3
+          Stage 2b →
+          Stage 2c →
+```
+
+**Conditional Execution**
+```
+Stage 1 → [If condition] → Stage 2a
+                          → Stage 2b
+```
+
+### 2. Message Bus
+
+**Purpose**: Enable asynchronous communication between agents.
+
+#### Message Types
 
 ```python
 class MessageType(Enum):
-    TASK = "task"              # Assign new task to agent
-    RESULT = "result"          # Task completion notification
-    STATUS = "status"          # Status update from agent
-    ERROR = "error"            # Error notification
-    FEEDBACK = "feedback"      # Feedback from one agent to another
-    CONTROL = "control"        # Control commands from orchestrator
+    TASK_ASSIGNMENT = "task_assignment"
+    TASK_COMPLETE = "task_complete"
+    TASK_FAILED = "task_failed"
+    AGENT_STATUS = "agent_status"
+    QUALITY_REPORT = "quality_report"
+    COORDINATION_REQUEST = "coordination_request"
+    STAGE_COMPLETE = "stage_complete"
+    ERROR = "error"
 ```
 
-### Message Structure
+#### Publish/Subscribe Pattern
+
+```python
+# Publisher
+await message_bus.publish(Message(
+    type=MessageType.TASK_COMPLETE,
+    data={'task_id': '123', 'result': {...}},
+    sender='writing_agent'
+))
+
+# Subscriber
+async def handle_task_complete(message: Message):
+    print(f"Task {message.data['task_id']} completed")
+    # Process result
+
+message_bus.subscribe(MessageType.TASK_COMPLETE, handle_task_complete)
+```
+
+#### Message Processing
+
+```python
+class MessageBus:
+    async def _process_messages(self):
+        """Continuous message processing loop."""
+        while self.running:
+            message = await self.message_queue.get()
+            await self._deliver_message(message)
+    
+    async def _deliver_message(self, message):
+        """Deliver message to all subscribers."""
+        handlers = self.subscribers.get(message.type, [])
+        for handler in handlers:
+            try:
+                await handler(message)
+            except Exception as e:
+                logger.error(f"Handler error: {e}")
+```
+
+#### Message Routing
+
+```python
+# Direct messaging
+message = Message(
+    type=MessageType.COORDINATION_REQUEST,
+    data={'request': 'status'},
+    sender='orchestrator',
+    recipient='research_agent'  # Specific recipient
+)
+
+# Broadcast messaging
+message = Message(
+    type=MessageType.AGENT_STATUS,
+    data={'status': 'idle'},
+    sender='research_agent'
+    # No recipient = broadcast
+)
+```
+
+### 3. Resource Manager
+
+**Purpose**: Manage computational resources and agent capacity.
+
+#### Resource Pool
 
 ```python
 @dataclass
-class Message:
-    id: str                          # Unique message ID
-    type: MessageType                # Message type
-    sender: str                      # Sending agent name
-    recipient: str                   # Receiving agent name
-    payload: Dict[str, Any]          # Message data
-    timestamp: datetime              # When created
-    priority: int                    # Priority (0-10, higher = more urgent)
-    correlation_id: Optional[str]    # Links related messages
+class ResourcePool:
+    max_size: int
+    available: int
+    in_use: Set[str]
+    waiting: asyncio.Queue
 ```
 
-### Usage Examples
-
-#### Publishing Messages
+#### Resource Acquisition
 
 ```python
-# Create message bus
-message_bus = MessageBus()
-
-# Register agents
-message_bus.register_agent("research", research_agent)
-message_bus.register_agent("writing", writing_agent)
-
-# Send a message
-await message_bus.send(
-    sender="orchestrator",
-    recipient="research",
-    message_type=MessageType.TASK,
-    payload={
-        "task_id": "research_001",
-        "action": "search",
-        "query": "quantum computing applications"
-    },
-    priority=5
-)
+# Acquire resource
+async with resource_manager.acquire('agent_1', timeout=60) as resource:
+    # Use resource
+    result = await agent.execute(task)
+    # Resource automatically released on exit
 ```
 
-#### Subscribing to Messages
+#### Load Balancing
 
 ```python
-async def handle_result(message: Message):
-    """Handle result messages"""
-    if message.type == MessageType.RESULT:
-        print(f"Received result from {message.sender}")
-        # Process result
-        result_data = message.payload
-
-# Subscribe to results
-message_bus.subscribe("result", handle_result)
-```
-
-#### Receiving Messages
-
-```python
-# Agent receives next message from its queue
-message = await message_bus.receive(
-    agent_name="writing",
-    timeout=30.0  # Wait up to 30 seconds
-)
-
-if message:
-    # Process the message
-    await process_message(message)
-```
-
-### Message Flow Example
-
-```
-1. Orchestrator sends TASK message to Research Agent
-   {
-     "type": "TASK",
-     "sender": "orchestrator",
-     "recipient": "research",
-     "payload": {"topic": "AI Ethics"},
-     "priority": 5
-   }
-
-2. Research Agent processes and sends RESULT
-   {
-     "type": "RESULT",
-     "sender": "research",
-     "recipient": "orchestrator",
-     "payload": {"research_data": {...}},
-     "correlation_id": "task_001"
-   }
-
-3. Orchestrator forwards to Writing Agent
-   {
-     "type": "TASK",
-     "sender": "orchestrator",
-     "recipient": "writing",
-     "payload": {"research_data": {...}},
-     "priority": 5,
-     "correlation_id": "task_001"
-   }
-
-4. Agents continue workflow...
-```
-
-## State Manager
-
-### Purpose
-
-The state manager maintains shared state across all agents, providing:
-
-1. **Centralized State**: Single source of truth for document state
-2. **Atomic Operations**: Thread-safe state updates
-3. **Version Control**: Track all changes to documents
-4. **History**: Complete audit trail of modifications
-5. **Consistency**: Ensure all agents see consistent state
-
-### State Types
-
-#### Document State
-
-```python
-@dataclass
-class DocumentState:
-    document_id: str
-    version: int
-    content: str
-    metadata: Dict[str, Any]
-    history: List[StateChange]
-    created_at: datetime
-    updated_at: datetime
-```
-
-#### Workflow State
-
-```python
-@dataclass
-class WorkflowState:
-    workflow_id: str
-    stage: str
-    completed_stages: List[str]
-    pending_stages: List[str]
-    quality_scores: Dict[str, float]
-    iteration: int
-```
-
-### Usage Examples
-
-#### Creating Document State
-
-```python
-state_manager = StateManager()
-
-# Create new document state
-state = await state_manager.create_document_state(
-    document_id="doc_001",
-    topic="Machine Learning in Healthcare",
-    requirements={
-        "length": "3000 words",
-        "tone": "professional",
-        "include_citations": True
-    },
-    context={}
-)
-```
-
-#### Updating Document Content
-
-```python
-# Agent updates document content
-success = await state_manager.update_document_content(
-    document_id="doc_001",
-    content="# Machine Learning in Healthcare\n\nIntroduction....",
-    actor="writing_agent"
-)
-
-if success:
-    print("Document updated successfully")
-```
-
-#### Tracking Workflow Progress
-
-```python
-# Create workflow state
-workflow = await state_manager.create_workflow_state(
-    workflow_id="workflow_001",
-    stages=["research", "writing", "editing", "verification"]
-)
-
-# Update current stage
-await state_manager.update_stage(
-    workflow_id="workflow_001",
-    stage="writing"
-)
-
-# Mark stage as completed
-await state_manager.complete_stage(
-    workflow_id="workflow_001",
-    stage="research",
-    quality_score=0.92
-)
-```
-
-#### Getting State History
-
-```python
-# Get complete history of changes
-history = await state_manager.get_state_history("doc_001")
-
-for change in history:
-    print(f"{change.timestamp}: {change.actor} - {change.action}")
-```
-
-### State Snapshots
-
-```python
-# Create snapshot of current state
-snapshot = await state_manager.snapshot_state("doc_001")
-
-# Save snapshot (e.g., to file or database)
-save_snapshot(snapshot)
-
-# Later, restore from snapshot
-await state_manager.restore_snapshot(snapshot)
-```
-
-## Communication Protocol
-
-### Agent-to-Agent Communication
-
-Agents communicate indirectly through the message bus:
-
-```python
-class CommunicationProtocol:
-    """
-    Defines communication patterns between agents.
-    """
+class ResourceManager:
+    async def acquire_least_loaded(self) -> str:
+        """Acquire least-loaded resource."""
+        # Find agent with least current load
+        loads = {agent_id: self._get_load(agent_id) 
+                for agent_id in self.agents}
+        
+        least_loaded = min(loads, key=loads.get)
+        return await self.acquire(least_loaded)
     
-    @staticmethod
-    async def request_response(message_bus, sender, recipient, request):
-        """
-        Request-response pattern.
-        
-        1. Send request
-        2. Wait for response
-        3. Return response or timeout
-        """
-        # Send request
-        message = await message_bus.send(
-            sender=sender,
-            recipient=recipient,
-            message_type=MessageType.TASK,
-            payload=request,
-            priority=5
-        )
-        
-        # Wait for response (with correlation ID)
-        timeout = 60.0
-        start_time = time.time()
-        
-        while time.time() - start_time < timeout:
-            response = await message_bus.receive(sender, timeout=1.0)
-            
-            if response and response.correlation_id == message.id:
-                return response.payload
-        
-        raise TimeoutError("No response received")
-    
-    @staticmethod
-    async def broadcast(message_bus, sender, recipients, message_data):
-        """
-        Broadcast message to multiple recipients.
-        """
-        for recipient in recipients:
-            await message_bus.send(
-                sender=sender,
-                recipient=recipient,
-                message_type=MessageType.CONTROL,
-                payload=message_data
-            )
-    
-    @staticmethod
-    async def publish_subscribe(message_bus, topic, message_data):
-        """
-        Pub/sub pattern - publish to all subscribers.
-        """
-        message = Message(
-            type=MessageType.STATUS,
-            sender="system",
-            recipient="",  # Broadcast
-            payload=message_data
-        )
-        
-        await message_bus.publish(message)
+    def _get_load(self, agent_id: str) -> float:
+        """Calculate current load for agent."""
+        # Implementation
+        pass
 ```
 
-### Synchronization Patterns
-
-#### Sequential Workflow
+#### Capacity Planning
 
 ```python
-async def sequential_workflow(orchestrator, agents):
-    """
-    Execute agents in sequence: A -> B -> C
-    """
-    result_a = await agents['a'].execute()
-    result_b = await agents['b'].execute(result_a)
-    result_c = await agents['c'].execute(result_b)
-    return result_c
-```
-
-#### Parallel Workflow
-
-```python
-async def parallel_workflow(orchestrator, agents):
-    """
-    Execute agents in parallel: A, B, C simultaneously
-    """
-    results = await asyncio.gather(
-        agents['a'].execute(),
-        agents['b'].execute(),
-        agents['c'].execute()
-    )
-    return combine_results(results)
-```
-
-#### Fork-Join Pattern
-
-```python
-async def fork_join_workflow(orchestrator, agents):
-    """
-    Fork: One agent spawns multiple parallel tasks
-    Join: Wait for all to complete and merge results
-    """
-    # Fork
-    tasks = [
-        agents['worker'].execute(chunk)
-        for chunk in split_work()
-    ]
+def calculate_required_capacity(workflow, request):
+    """Estimate required resources for workflow."""
     
-    # Join
+    # Estimate based on:
+    # - Document length
+    # - Complexity
+    # - Parallel stages
+    # - Historical data
+    
+    base_capacity = len(workflow.stages)
+    parallel_multiplier = count_parallel_stages(workflow)
+    complexity_factor = estimate_complexity(request)
+    
+    required = base_capacity * parallel_multiplier * complexity_factor
+    
+    return math.ceil(required)
+```
+
+## Coordination Patterns
+
+### 1. Sequential Coordination
+
+Agents execute one after another:
+
+```python
+async def sequential_execution(stages, context):
+    for stage in stages:
+        result = await execute_stage(stage, context)
+        context[stage.name] = result
+    return context
+```
+
+### 2. Parallel Coordination
+
+Multiple agents work simultaneously:
+
+```python
+async def parallel_execution(stages, context):
+    tasks = [execute_stage(stage, context) for stage in stages]
     results = await asyncio.gather(*tasks)
-    return merge_results(results)
+    
+    for stage, result in zip(stages, results):
+        context[stage.name] = result
+    
+    return context
+```
+
+### 3. Pipeline Coordination
+
+Agents form a processing pipeline:
+
+```python
+async def pipeline_execution(stages, initial_data):
+    data = initial_data
+    
+    for stage in stages:
+        data = await execute_stage(stage, data)
+    
+    return data
+```
+
+### 4. Hierarchical Coordination
+
+Super-agent coordinates sub-agents:
+
+```python
+class SupervisorAgent:
+    async def coordinate(self, task):
+        # Decompose task
+        subtasks = self.decompose_task(task)
+        
+        # Assign to sub-agents
+        results = await asyncio.gather(*[
+            self.assign_subtask(subtask, agent)
+            for subtask, agent in zip(subtasks, self.sub_agents)
+        ])
+        
+        # Aggregate results
+        return self.aggregate(results)
+```
+
+## Synchronization
+
+### Stage Dependencies
+
+```python
+class WorkflowExecutor:
+    async def execute_with_dependencies(self, workflow):
+        completed = set()
+        pending = set(workflow.stages)
+        
+        while pending:
+            # Find executable stages
+            executable = [
+                stage for stage in pending
+                if stage.can_execute(completed)
+            ]
+            
+            if not executable:
+                raise DeadlockError("No executable stages")
+            
+            # Execute stages
+            results = await asyncio.gather(*[
+                self.execute_stage(stage)
+                for stage in executable
+            ])
+            
+            # Update state
+            for stage in executable:
+                completed.add(stage.name)
+                pending.remove(stage)
+```
+
+### Barrier Synchronization
+
+```python
+class Barrier:
+    def __init__(self, count):
+        self.count = count
+        self.waiting = 0
+        self.event = asyncio.Event()
+    
+    async def wait(self):
+        self.waiting += 1
+        if self.waiting >= self.count:
+            self.event.set()
+        await self.event.wait()
 ```
 
 ## Error Handling
 
-### Message Delivery Failures
+### Agent Failure Recovery
 
 ```python
-try:
-    await message_bus.send(
-        sender="agent_a",
-        recipient="agent_b",
-        message_type=MessageType.TASK,
-        payload=data
+async def execute_with_recovery(stage, context, max_retries=3):
+    for attempt in range(max_retries):
+        try:
+            return await execute_stage(stage, context)
+        except AgentFailure as e:
+            if attempt < max_retries - 1:
+                # Restart agent
+                await restart_agent(stage.agent_type)
+                await asyncio.sleep(2 ** attempt)
+            else:
+                raise WorkflowError(f"Stage {stage.name} failed after {max_retries} attempts")
+```
+
+### Partial Failure Handling
+
+```python
+async def execute_with_partial_failure(stages, context):
+    results = await asyncio.gather(
+        *[execute_stage(s, context) for s in stages],
+        return_exceptions=True
     )
-except RecipientNotFoundError:
-    # Handle unknown recipient
-    logger.error("Recipient not registered")
-    # Message goes to dead letter queue
-```
-
-### State Conflicts
-
-```python
-try:
-    async with state_manager.locks[doc_id]:
-        # Atomic update
-        await state_manager.update_document_content(
-            document_id=doc_id,
-            content=new_content,
-            actor="agent_x"
-        )
-except StateConflictError:
-    # Handle concurrent modification
-    current_state = await state_manager.get_document_state(doc_id)
-    # Merge or retry
-```
-
-### Dead Letter Queue
-
-```python
-# Check for undeliverable messages
-dead_letters = message_bus.get_dead_letters()
-
-for message in dead_letters:
-    logger.warning(f"Undeliverable message: {message.id}")
-    # Retry or handle appropriately
-    await handle_dead_letter(message)
+    
+    successful = [r for r in results if not isinstance(r, Exception)]
+    failed = [r for r in results if isinstance(r, Exception)]
+    
+    if failed:
+        logger.warning(f"{len(failed)} stages failed")
+        # Decide: continue, retry, or abort
+    
+    return successful
 ```
 
 ## Performance Optimization
 
-### Message Batching
+### 1. Caching
 
 ```python
-async def batch_messages(message_bus, messages):
-    """
-    Send multiple messages efficiently.
-    """
-    tasks = [
-        message_bus.publish(msg)
-        for msg in messages
-    ]
-    await asyncio.gather(*tasks)
-```
-
-### State Caching
-
-```python
-class CachedStateManager(StateManager):
+class CachedWorkflowExecutor:
     def __init__(self):
-        super().__init__()
         self.cache = {}
-        self.cache_ttl = 60  # seconds
     
-    async def get_document_state(self, document_id):
-        # Check cache first
-        if document_id in self.cache:
-            cached, timestamp = self.cache[document_id]
-            if time.time() - timestamp < self.cache_ttl:
-                return cached
+    async def execute_stage(self, stage, context):
+        cache_key = self._get_cache_key(stage, context)
         
-        # Fetch from storage
-        state = await super().get_document_state(document_id)
-        self.cache[document_id] = (state, time.time())
-        return state
+        if cache_key in self.cache:
+            return self.cache[cache_key]
+        
+        result = await super().execute_stage(stage, context)
+        self.cache[cache_key] = result
+        return result
 ```
 
-### Connection Pooling
+### 2. Prefetching
 
 ```python
-class PooledMessageBus(MessageBus):
-    def __init__(self, pool_size=10):
-        super().__init__()
-        self.connection_pool = ConnectionPool(pool_size)
+async def execute_with_prefetch(stages, context):
+    # Start next stage early
+    current = stages[0]
+    current_task = asyncio.create_task(execute_stage(current, context))
     
-    async def send(self, *args, **kwargs):
-        async with self.connection_pool.acquire() as connection:
-            return await super().send(*args, **kwargs)
+    for i, next_stage in enumerate(stages[1:], 1):
+        # Wait for current
+        result = await current_task
+        context[current.name] = result
+        
+        # Start next
+        current = next_stage
+        current_task = asyncio.create_task(execute_stage(current, context))
+    
+    # Wait for last
+    result = await current_task
+    context[current.name] = result
+```
+
+### 3. Adaptive Scheduling
+
+```python
+class AdaptiveScheduler:
+    def schedule_tasks(self, tasks):
+        # Sort by priority and estimated duration
+        prioritized = sorted(
+            tasks,
+            key=lambda t: (t.priority, -self.estimate_duration(t))
+        )
+        return prioritized
+    
+    def estimate_duration(self, task):
+        # Use historical data
+        similar_tasks = self.get_similar_tasks(task)
+        if similar_tasks:
+            return statistics.mean([t.duration for t in similar_tasks])
+        return DEFAULT_DURATION
 ```
 
 ## Monitoring
 
-### Message Metrics
+### Coordination Metrics
 
 ```python
-class MonitoredMessageBus(MessageBus):
+class CoordinationMetrics:
     def __init__(self):
-        super().__init__()
         self.metrics = {
+            'workflows_executed': 0,
+            'stages_executed': 0,
             'messages_sent': 0,
             'messages_received': 0,
-            'average_latency': 0.0,
-            'errors': 0
+            'resource_acquisitions': 0,
+            'coordination_overhead': 0.0
         }
     
-    async def send(self, *args, **kwargs):
-        start = time.time()
-        try:
-            result = await super().send(*args, **kwargs)
-            self.metrics['messages_sent'] += 1
-            latency = time.time() - start
-            self._update_latency(latency)
-            return result
-        except Exception as e:
-            self.metrics['errors'] += 1
-            raise
+    def record_workflow(self, workflow, duration):
+        self.metrics['workflows_executed'] += 1
+        self.metrics['stages_executed'] += len(workflow.stages)
+        # Calculate overhead
+        pure_execution = sum(stage.duration for stage in workflow.stages)
+        overhead = duration - pure_execution
+        self.metrics['coordination_overhead'] += overhead
 ```
-
-### State Metrics
-
-```python
-metrics = {
-    'active_documents': len(state_manager.document_states),
-    'active_workflows': len(state_manager.workflow_states),
-    'total_state_changes': sum(
-        len(state.history) 
-        for state in state_manager.document_states.values()
-    ),
-    'average_document_version': sum(
-        state.version 
-        for state in state_manager.document_states.values()
-    ) / max(len(state_manager.document_states), 1)
-}
-```
-
-## Best Practices
-
-### 1. Message Design
-- Keep payloads small and focused
-- Use correlation IDs to link related messages
-- Set appropriate priorities
-- Include timestamps for debugging
-
-### 2. State Management
-- Always use locks for concurrent updates
-- Keep state history bounded (delete old entries)
-- Create snapshots before major operations
-- Validate state before updates
-
-### 3. Error Recovery
-- Implement retry logic with exponential backoff
-- Use dead letter queues for failed messages
-- Log all errors with context
-- Have fallback mechanisms
-
-### 4. Testing
-- Test message ordering
-- Test concurrent state updates
-- Test failure scenarios
-- Test message loss/duplication
 
 ---
 
-The coordination system is the backbone of the multi-agent framework, enabling scalable, reliable communication and state management across all components.
+**See Also**:
+- [Architecture](architecture.md)
+- [Agent Design](agents.md)
+- [API Reference](api_reference.md)
