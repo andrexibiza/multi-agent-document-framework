@@ -4,274 +4,258 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
 
-A production-ready framework for building multi-agent document creation systems with intelligent coordination, verification, and quality control.
+A production-ready framework for building sophisticated multi-agent document creation systems. This framework enables you to orchestrate multiple specialized AI agents that collaborate to create, verify, and refine complex documents.
 
-## 🎯 Overview
+## 🌟 Key Features
 
-The Multi-Agent Document Framework enables the creation of sophisticated document generation systems using specialized AI agents that work together through coordinated workflows. Each agent has a specific role (research, writing, editing, verification) and the system orchestrates their collaboration to produce high-quality documents.
-
-### Key Features
-
-- **🤖 Multi-Agent Orchestration**: Coordinate multiple specialized agents with different capabilities
-- **📝 Document Pipeline**: Complete workflow from research to final output
-- **✅ Quality Assurance**: Built-in verification and validation systems
-- **🔄 Error Recovery**: Robust error handling and retry mechanisms
-- **🎨 Flexible Architecture**: Extensible design for custom agents and workflows
-- **📊 Performance Monitoring**: Track agent performance and system metrics
-- **🔌 LLM Agnostic**: Works with OpenAI, Anthropic, local models, and more
+- **Multi-Agent Orchestration**: Coordinate multiple specialized agents with different roles and expertise
+- **Content Verification**: Built-in verification system to ensure quality and consistency
+- **Flexible Architecture**: Easily extensible for custom agent types and workflows
+- **Role-Based Agents**: Specialized agents for research, writing, editing, fact-checking, and more
+- **Document Assembly**: Intelligent document composition from multiple agent contributions
+- **Async Support**: Built for high-performance concurrent agent operations
+- **Comprehensive Logging**: Track agent activities and decision-making processes
+- **Configuration Management**: YAML-based configuration for easy customization
 
 ## 🏗️ Architecture
 
+The framework consists of four core components:
+
+1. **Agents**: Specialized units that perform specific tasks (research, writing, editing, etc.)
+2. **Coordinator**: Orchestrates agent collaboration and manages workflow
+3. **Verification System**: Validates content quality, consistency, and accuracy
+4. **Document Manager**: Assembles and manages document structure and content
+
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                     Orchestrator                            │
-│  (Coordinates agents, manages workflow, handles routing)    │
-└────────────────────┬────────────────────────────────────────┘
-                     │
-        ┌────────────┼────────────┬────────────┐
-        │            │            │            │
-   ┌────▼───┐  ┌────▼───┐  ┌────▼───┐  ┌────▼───┐
-   │Research│  │Writing │  │Editing │  │Verify  │
-   │ Agent  │  │ Agent  │  │ Agent  │  │ Agent  │
-   └────┬───┘  └────┬───┘  └────┬───┘  └────┬───┘
-        │            │            │            │
-        └────────────┴────────────┴────────────┘
-                     │
-            ┌────────▼─────────┐
-            │  Document Store  │
-            │  Version Control │
-            └──────────────────┘
+┌─────────────────────────────────────────────────────────┐
+│                     Coordinator                          │
+│  (Orchestrates workflow and agent communication)        │
+└──────────────┬──────────────────────────┬───────────────┘
+               │                          │
+     ┌─────────▼─────────┐      ┌────────▼──────────┐
+     │   Agent Pool      │      │  Verification     │
+     │                   │      │     System        │
+     │ • Research Agent  │      │                   │
+     │ • Writer Agent    │◄─────┤ • Quality Check   │
+     │ • Editor Agent    │      │ • Fact Check      │
+     │ • Fact-Checker    │      │ • Consistency     │
+     └─────────┬─────────┘      └───────────────────┘
+               │
+     ┌─────────▼─────────┐
+     │ Document Manager  │
+     │  (Assembly &      │
+     │   Structure)      │
+     └───────────────────┘
 ```
 
-## 🚀 Quick Start
+## 📦 Installation
 
-### Installation
+### From Source
 
 ```bash
-# Clone the repository
 git clone https://github.com/andrexibiza/multi-agent-document-framework.git
 cd multi-agent-document-framework
-
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-
-# Install the package
 pip install -e .
 ```
 
-### Basic Usage
+### Using pip (when published)
+
+```bash
+pip install multi-agent-document-framework
+```
+
+### Requirements
+
+- Python 3.8+
+- Dependencies listed in `requirements.txt`
+
+## 🚀 Quick Start
+
+### Simple Document Creation
 
 ```python
-from madf import DocumentOrchestrator, ResearchAgent, WritingAgent, EditingAgent, VerificationAgent
-from madf.config import OrchestratorConfig
+from multi_agent_framework import Agent, Coordinator, DocumentManager
+from multi_agent_framework.config import Config
 
-# Initialize agents
-research_agent = ResearchAgent(model="gpt-4")
-writing_agent = WritingAgent(model="gpt-4")
-editing_agent = EditingAgent(model="gpt-4")
-verification_agent = VerificationAgent(model="gpt-4")
+# Initialize configuration
+config = Config.from_yaml('config.yaml')
 
-# Create orchestrator
-config = OrchestratorConfig(
-    max_iterations=3,
-    quality_threshold=0.85,
-    enable_verification=True
+# Create specialized agents
+researcher = Agent(
+    agent_id="researcher_01",
+    role="researcher",
+    capabilities=["web_search", "data_analysis"],
+    model="gpt-4"
 )
 
-orchestrator = DocumentOrchestrator(
-    agents={
-        'research': research_agent,
-        'writing': writing_agent,
-        'editing': editing_agent,
-        'verification': verification_agent
-    },
+writer = Agent(
+    agent_id="writer_01",
+    role="writer",
+    capabilities=["content_creation", "storytelling"],
+    model="gpt-4"
+)
+
+editor = Agent(
+    agent_id="editor_01",
+    role="editor",
+    capabilities=["proofreading", "style_improvement"],
+    model="gpt-4"
+)
+
+# Initialize coordinator
+coordinator = Coordinator(
+    agents=[researcher, writer, editor],
     config=config
 )
 
-# Generate document
-result = orchestrator.create_document(
-    topic="The Impact of Artificial Intelligence on Healthcare",
+# Create document
+document = coordinator.create_document(
+    topic="The Future of Artificial Intelligence",
     requirements={
-        "length": "2000-3000 words",
-        "tone": "professional",
-        "include_citations": True,
-        "target_audience": "healthcare professionals"
+        "length": "2000 words",
+        "style": "technical but accessible",
+        "sections": ["Introduction", "Current State", "Future Trends", "Conclusion"]
     }
 )
 
-print(f"Document created: {result.document_id}")
-print(f"Quality score: {result.quality_score}")
-print(f"\nContent:\n{result.content}")
+print(document.content)
+```
+
+### Advanced Multi-Agent Workflow
+
+```python
+import asyncio
+from multi_agent_framework import Coordinator, Agent
+from multi_agent_framework.verification import VerificationSystem
+
+async def create_research_paper():
+    # Create agent team
+    agents = [
+        Agent("researcher_01", "researcher", ["literature_review", "data_collection"]),
+        Agent("analyst_01", "analyst", ["data_analysis", "statistical_modeling"]),
+        Agent("writer_01", "writer", ["academic_writing", "technical_writing"]),
+        Agent("reviewer_01", "reviewer", ["peer_review", "methodology_check"]),
+        Agent("editor_01", "editor", ["formatting", "citation_management"])
+    ]
+    
+    # Setup verification
+    verification = VerificationSystem(
+        checks=["factual_accuracy", "consistency", "completeness", "citations"]
+    )
+    
+    # Initialize coordinator with verification
+    coordinator = Coordinator(
+        agents=agents,
+        verification_system=verification,
+        max_iterations=5
+    )
+    
+    # Create document with iterative refinement
+    document = await coordinator.create_document_async(
+        topic="Multi-Agent Systems in Document Generation",
+        requirements={
+            "type": "research_paper",
+            "length": "8000 words",
+            "citation_style": "IEEE",
+            "sections": [
+                "Abstract",
+                "Introduction",
+                "Literature Review",
+                "Methodology",
+                "Results",
+                "Discussion",
+                "Conclusion",
+                "References"
+            ]
+        }
+    )
+    
+    return document
+
+# Run the workflow
+document = asyncio.run(create_research_paper())
+print(f"Document created with {document.word_count} words")
+print(f"Verification score: {document.verification_score}")
 ```
 
 ## 📚 Documentation
 
-- [Technical Architecture](docs/architecture.md) - System design and components
-- [Agent Design](docs/agents.md) - Agent roles and capabilities
-- [Coordination Protocol](docs/coordination.md) - How agents communicate
-- [Verification System](docs/verification.md) - Quality control mechanisms
-- [API Reference](docs/api_reference.md) - Complete API documentation
-- [Configuration Guide](docs/configuration.md) - Setup and customization
-- [Examples](examples/) - Real-world usage examples
+- **[Architecture Guide](docs/architecture.md)**: Deep dive into framework architecture
+- **[API Reference](docs/api_reference.md)**: Complete API documentation
+- **[Agent Design](docs/agent_design.md)**: How to create custom agents
+- **[Workflows](docs/workflows.md)**: Common workflow patterns and best practices
 
-## 🎓 How It Works
+## 🔧 Configuration
 
-### The Multi-Agent Workflow
+Create a `config.yaml` file:
 
-1. **Request Analysis**: The orchestrator analyzes the document request and determines the required workflow
-2. **Research Phase**: Research agent gathers information, sources, and context
-3. **Writing Phase**: Writing agent creates initial draft based on research
-4. **Editing Phase**: Editing agent refines content, improves clarity, checks consistency
-5. **Verification Phase**: Verification agent validates accuracy, completeness, and quality
-6. **Iteration**: If quality threshold not met, cycle repeats with feedback
-7. **Finalization**: Document is finalized and returned with metadata
+```yaml
+framework:
+  name: "Multi-Agent Document Framework"
+  version: "1.0.0"
 
-### Why Multi-Agent?
+agents:
+  default_model: "gpt-4"
+  timeout: 300
+  max_retries: 3
 
-**Specialization**: Each agent is optimized for a specific task, leading to better results than a single general-purpose agent.
+coordinator:
+  max_concurrent_agents: 5
+  collaboration_mode: "sequential"  # or "parallel"
+  enable_feedback_loops: true
 
-**Parallel Processing**: Multiple agents can work simultaneously on different aspects of the document.
+verification:
+  enabled: true
+  min_quality_score: 0.8
+  checks:
+    - factual_accuracy
+    - consistency
+    - completeness
+    - grammar
+    - style
 
-**Quality Control**: Dedicated verification agents ensure high-quality output through systematic checks.
+document:
+  default_format: "markdown"
+  auto_save: true
+  versioning: true
 
-**Scalability**: Add new specialized agents without modifying existing ones.
-
-**Fault Tolerance**: If one agent fails, others can continue or compensate.
-
-## 🔧 Advanced Features
-
-### Custom Agents
-
-Create your own specialized agents:
-
-```python
-from madf.agents import BaseAgent
-
-class CitationAgent(BaseAgent):
-    def __init__(self, model="gpt-4"):
-        super().__init__(name="citation", model=model)
-    
-    def process(self, context):
-        # Custom citation logic
-        return self.generate_citations(context)
-```
-
-### Workflow Customization
-
-```python
-from madf.workflows import WorkflowBuilder
-
-# Build custom workflow
-workflow = WorkflowBuilder() \
-    .add_stage("research", parallel=True) \
-    .add_stage("outline") \
-    .add_stage("writing", parallel=True, chunks=5) \
-    .add_stage("editing") \
-    .add_stage("verification") \
-    .add_condition("quality_check", threshold=0.9) \
-    .add_loop(max_iterations=3) \
-    .build()
-
-orchestrator.set_workflow(workflow)
-```
-
-### Monitoring and Analytics
-
-```python
-from madf.monitoring import PerformanceMonitor
-
-monitor = PerformanceMonitor()
-orchestrator.add_monitor(monitor)
-
-# After document generation
-metrics = monitor.get_metrics()
-print(f"Total time: {metrics.total_time}")
-print(f"Agent breakdown: {metrics.agent_times}")
-print(f"Token usage: {metrics.token_usage}")
-```
-
-## 📊 Project Structure
-
-```
-multi-agent-document-framework/
-├── src/madf/
-│   ├── __init__.py
-│   ├── orchestrator.py          # Main orchestration logic
-│   ├── agents/
-│   │   ├── __init__.py
-│   │   ├── base.py              # Base agent class
-│   │   ├── research.py          # Research agent
-│   │   ├── writing.py           # Writing agent
-│   │   ├── editing.py           # Editing agent
-│   │   └── verification.py      # Verification agent
-│   ├── coordination/
-│   │   ├── __init__.py
-│   │   ├── protocol.py          # Communication protocol
-│   │   ├── message_bus.py       # Message passing system
-│   │   └── state_manager.py     # Shared state management
-│   ├── verification/
-│   │   ├── __init__.py
-│   │   ├── quality_checker.py   # Quality assessment
-│   │   ├── fact_checker.py      # Fact verification
-│   │   └── consistency.py       # Consistency checks
-│   ├── workflows/
-│   │   ├── __init__.py
-│   │   ├── builder.py           # Workflow construction
-│   │   └── executor.py          # Workflow execution
-│   ├── models/
-│   │   ├── __init__.py
-│   │   ├── document.py          # Document model
-│   │   └── context.py           # Context model
-│   └── utils/
-│       ├── __init__.py
-│       ├── llm_wrapper.py       # LLM abstraction
-│       └── prompts.py           # Prompt templates
-├── docs/
-│   ├── architecture.md
-│   ├── agents.md
-│   ├── coordination.md
-│   ├── verification.md
-│   ├── api_reference.md
-│   └── configuration.md
-├── examples/
-│   ├── basic_usage.py
-│   ├── custom_agents.py
-│   ├── advanced_workflow.py
-│   └── monitoring_example.py
-├── tests/
-│   ├── test_orchestrator.py
-│   ├── test_agents.py
-│   ├── test_coordination.py
-│   └── test_verification.py
-├── config/
-│   ├── default_config.yaml
-│   └── agent_configs/
-├── requirements.txt
-├── setup.py
-├── pyproject.toml
-└── README.md
+logging:
+  level: "INFO"
+  file: "logs/framework.log"
 ```
 
 ## 🧪 Testing
 
+Run the test suite:
+
 ```bash
-# Run all tests
-pytest
-
-# Run with coverage
-pytest --cov=madf tests/
-
-# Run specific test
-pytest tests/test_orchestrator.py
+pytest tests/
 ```
+
+With coverage:
+
+```bash
+pytest --cov=multi_agent_framework tests/
+```
+
+## 📖 Examples
+
+Check the `examples/` directory for:
+
+- `simple_document.py`: Basic document creation
+- `multi_agent_document.py`: Advanced multi-agent collaboration
+- `custom_agent.py`: Creating custom agent types
+- `verification_pipeline.py`: Setting up verification workflows
 
 ## 🤝 Contributing
 
-Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
 
 ## 📄 License
 
@@ -279,13 +263,26 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ## 🙏 Acknowledgments
 
-- Inspired by multi-agent AI research and Claude's workflow design patterns
-- Built on top of modern LLM capabilities and agentic frameworks
+- Inspired by modern multi-agent AI research
+- Built with best practices from software engineering and AI communities
+- Thanks to all contributors and users
 
-## 📞 Contact
+## 📞 Support
 
-For questions or support, please open an issue or contact the maintainers.
+- 📧 Email: support@example.com
+- 🐛 Issues: [GitHub Issues](https://github.com/andrexibiza/multi-agent-document-framework/issues)
+- 💬 Discussions: [GitHub Discussions](https://github.com/andrexibiza/multi-agent-document-framework/discussions)
+
+## 🗺️ Roadmap
+
+- [ ] Support for more LLM providers (Claude, Gemini, etc.)
+- [ ] Visual workflow designer
+- [ ] Real-time collaboration features
+- [ ] Template library for common document types
+- [ ] Integration with document management systems
+- [ ] Advanced analytics and reporting
+- [ ] Multi-language support
 
 ---
 
-**Note**: This framework is designed for production use but requires proper API keys and configuration. See the [Configuration Guide](docs/configuration.md) for setup instructions.
+**Built with ❤️ by the Multi-Agent Framework Team**
