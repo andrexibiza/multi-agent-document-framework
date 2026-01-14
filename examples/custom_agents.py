@@ -1,336 +1,192 @@
-"""
-Example of creating custom agents for specialized tasks.
-
-This example shows how to:
-1. Create a custom agent class
-2. Integrate it with the framework
-3. Use it in a workflow
-"""
+"""Example of creating custom specialized agents."""
 
 import asyncio
-import json
-from typing import Dict, Any, List
+import sys
+from pathlib import Path
+from typing import Dict
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 from madf.agents.base import BaseAgent
-from madf.models import Task, Result
-from madf import DocumentOrchestrator, OrchestratorConfig
+from madf.models.task import Task, TaskResult
+from madf.utils.config import AgentConfig, ModelConfig
+from madf.utils.logging import setup_logging
 
 
-class CitationAgent(BaseAgent):
+class DataAnalysisAgent(BaseAgent):
     """
-    Custom agent that formats and validates citations.
-    """
-    
-    def __init__(self, model: str = "gpt-4", config: Dict[str, Any] = None):
-        super().__init__(name="citation", model=model, config=config)
-        self.citation_style = config.get('citation_style', 'APA') if config else 'APA'
-    
-    async def process(self, task: Task) -> Result:
-        """
-        Process citation task.
-        
-        Expected payload:
-        {
-            "sources": List[Dict],  # List of source metadata
-            "style": str  # Citation style (APA, MLA, Chicago, etc.)
-        }
-        """
-        sources = task.payload.get('sources', [])
-        style = task.payload.get('style', self.citation_style)
-        
-        # Generate citations
-        citations = await self._generate_citations(sources, style)
-        
-        # Validate citations
-        validation = await self._validate_citations(citations)
-        
-        return Result(
-            task_id=task.task_id,
-            success=True,
-            output={
-                'citations': citations,
-                'bibliography': self._create_bibliography(citations),
-                'validation': validation
-            },
-            metadata={
-                'citation_count': len(citations),
-                'style': style
-            },
-            metrics={
-                'tokens_used': self.llm.get_token_count()
-            }
-        )
-    
-    async def _generate_citations(self, sources: List[Dict], style: str) -> List[Dict]:
-        """Generate formatted citations"""
-        prompt = f"""
-Generate {style} style citations for the following sources.
-
-Sources:
-{json.dumps(sources, indent=2)}
-
-For each source, provide:
-1. In-text citation format
-2. Bibliography entry
-3. Source type
-
-Return as JSON array.
-"""
-        
-        response = await self.llm.generate(prompt)
-        citations = json.loads(response)
-        return citations
-    
-    async def _validate_citations(self, citations: List[Dict]) -> Dict:
-        """Validate citation format"""
-        prompt = f"""
-Validate these citations for correctness and completeness.
-
-Citations:
-{json.dumps(citations, indent=2)}
-
-Check for:
-1. Required elements present
-2. Proper formatting
-3. Consistency
-
-Return validation report as JSON:
-{{
-    "valid": bool,
-    "issues": [str],
-    "score": float (0-1)
-}}
-"""
-        
-        response = await self.llm.generate(prompt)
-        validation = json.loads(response)
-        return validation
-    
-    def _create_bibliography(self, citations: List[Dict]) -> str:
-        """Create formatted bibliography"""
-        entries = [c.get('bibliography', '') for c in citations]
-        return "\n".join(sorted(entries))
-
-
-class SEOAgent(BaseAgent):
-    """
-    Custom agent that optimizes content for search engines.
+    Custom agent for data analysis and visualization recommendations.
     """
     
-    def __init__(self, model: str = "gpt-4", config: Dict[str, Any] = None):
-        super().__init__(name="seo", model=model, config=config)
+    def __init__(self, config: AgentConfig):
+        super().__init__(config)
+        self.specialization = "data_analysis"
     
-    async def process(self, task: Task) -> Result:
+    async def process(self, task: Task) -> TaskResult:
         """
-        Process SEO optimization task.
+        Analyze data and provide insights.
+        
+        Expected task data:
+        - data_description: Description of the data
+        - analysis_goals: Goals for the analysis
         """
-        content = task.payload.get('content', '')
-        target_keywords = task.payload.get('keywords', [])
+        data_desc = task.data.get('data_description')
+        goals = task.data.get('analysis_goals', [])
         
-        # Analyze SEO
-        analysis = await self._analyze_seo(content, target_keywords)
-        
-        # Generate recommendations
-        recommendations = await self._generate_recommendations(analysis)
-        
-        # Optionally apply optimizations
-        optimized_content = content
-        if task.payload.get('apply_optimizations', False):
-            optimized_content = await self._optimize_content(
-                content,
-                recommendations
-            )
-        
-        return Result(
-            task_id=task.task_id,
-            success=True,
-            output={
-                'analysis': analysis,
-                'recommendations': recommendations,
-                'optimized_content': optimized_content
-            },
-            metadata={
-                'seo_score': analysis.get('score', 0.0),
-                'keywords_found': len(analysis.get('keywords_found', []))
-            },
-            metrics={
-                'tokens_used': self.llm.get_token_count()
-            }
-        )
-    
-    async def _analyze_seo(self, content: str, keywords: List[str]) -> Dict:
-        """Analyze content for SEO"""
-        prompt = f"""
-Analyze this content for SEO optimization.
+        prompt = f"""Perform a comprehensive data analysis plan for:
 
-Content:
-{content[:1000]}...
+Data Description:
+{data_desc}
 
-Target Keywords: {', '.join(keywords)}
+Analysis Goals:
+{', '.join(goals)}
 
 Provide:
-1. Keyword density analysis
-2. Heading structure evaluation
-3. Meta description suggestions
-4. Internal linking opportunities
-5. Overall SEO score (0-1)
-
-Return as JSON.
-"""
+1. Recommended analysis approaches
+2. Statistical methods to use
+3. Visualization suggestions
+4. Expected insights
+5. Potential challenges"""
         
-        response = await self.llm.generate(prompt)
-        analysis = json.loads(response)
-        return analysis
+        analysis_plan = await self.llm_client.generate(
+            prompt=prompt,
+            temperature=0.5,
+            system_message="You are a data analysis expert."
+        )
+        
+        return TaskResult(
+            task_id=task.id,
+            success=True,
+            data={'analysis_plan': analysis_plan}
+        )
+
+
+class SummarizationAgent(BaseAgent):
+    """
+    Custom agent for document summarization.
+    """
     
-    async def _generate_recommendations(self, analysis: Dict) -> List[Dict]:
-        """Generate SEO improvement recommendations"""
-        prompt = f"""
-Based on this SEO analysis, provide actionable recommendations.
-
-Analysis:
-{json.dumps(analysis, indent=2)}
-
-Provide 5-10 specific recommendations with:
-- Priority (high/medium/low)
-- Category (keywords, structure, metadata, etc.)
-- Action to take
-- Expected impact
-
-Return as JSON array.
-"""
-        
-        response = await self.llm.generate(prompt)
-        recommendations = json.loads(response)
-        return recommendations
+    def __init__(self, config: AgentConfig):
+        super().__init__(config)
+        self.specialization = "summarization"
     
-    async def _optimize_content(self, content: str, recommendations: List[Dict]) -> str:
-        """Apply SEO optimizations to content"""
-        high_priority = [r for r in recommendations if r.get('priority') == 'high']
+    async def process(self, task: Task) -> TaskResult:
+        """
+        Create summary of content.
         
-        prompt = f"""
-Optimize this content based on these recommendations.
+        Expected task data:
+        - content: Content to summarize
+        - summary_length: Target summary length
+        - format: Summary format (bullet, paragraph, executive)
+        """
+        content = task.data.get('content')
+        length = task.data.get('summary_length', 'medium')
+        format_type = task.data.get('format', 'paragraph')
+        
+        prompt = f"""Create a {length} summary of the following content:
 
-Content:
 {content}
 
-Recommendations:
-{json.dumps(high_priority, indent=2)}
+Format: {format_type}
 
-Apply improvements while maintaining quality and readability.
-Return the optimized content.
-"""
+Ensure the summary:
+1. Captures key points
+2. Maintains accuracy
+3. Is concise and clear
+4. Follows the specified format"""
         
-        optimized = await self.llm.generate(prompt)
-        return optimized
+        summary = await self.llm_client.generate(
+            prompt=prompt,
+            temperature=0.4,
+            system_message="You are an expert at creating concise, accurate summaries."
+        )
+        
+        return TaskResult(
+            task_id=task.id,
+            success=True,
+            data={'summary': summary}
+        )
 
 
 async def main():
-    """
-    Example using custom agents.
-    """
-    print("Custom Agents Example\n" + "="*50)
+    """Demonstrate custom agents."""
+    setup_logging(level="INFO")
     
-    # Create custom agents
-    citation_agent = CitationAgent(
-        model="gpt-4",
-        config={'citation_style': 'APA'}
+    print("Custom Agent Examples\n" + "="*50)
+    
+    # Create custom agent configs
+    analysis_config = AgentConfig(
+        name="data_analysis",
+        model_config=ModelConfig(model="gpt-4", temperature=0.5)
     )
     
-    seo_agent = SEOAgent(
-        model="gpt-4",
-        config={}
+    summarization_config = AgentConfig(
+        name="summarization",
+        model_config=ModelConfig(model="gpt-4", temperature=0.3)
     )
     
-    # Create standard agents
-    from madf import ResearchAgent, WritingAgent, EditingAgent, VerificationAgent
+    # Instantiate custom agents
+    analysis_agent = DataAnalysisAgent(analysis_config)
+    summarization_agent = SummarizationAgent(summarization_config)
     
-    research_agent = ResearchAgent(model="gpt-4")
-    writing_agent = WritingAgent(model="gpt-4")
-    editing_agent = EditingAgent(model="gpt-4")
-    verification_agent = VerificationAgent(model="gpt-4")
-    
-    # Create orchestrator with custom agents
-    orchestrator = DocumentOrchestrator(
-        agents={
-            'research': research_agent,
-            'writing': writing_agent,
-            'editing': editing_agent,
-            'verification': verification_agent,
-            'citation': citation_agent,  # Custom agent
-            'seo': seo_agent  # Custom agent
-        },
-        config=OrchestratorConfig()
-    )
-    
-    print("\n✓ Custom agents integrated successfully")
-    
-    # Generate document
-    result = await orchestrator.create_document(
-        topic="The Future of Renewable Energy",
-        requirements={
-            "length": "1500 words",
-            "tone": "informative",
-            "include_citations": True,
-            "optimize_seo": True,
-            "target_keywords": ["renewable energy", "solar power", "sustainability"]
+    # Test data analysis agent
+    print("\n1. Testing Data Analysis Agent...")
+    analysis_task = Task(
+        id="task_1",
+        type="data_analysis",
+        data={
+            'data_description': "Sales data from Q1-Q4 2024 including revenue, units sold, and customer demographics",
+            'analysis_goals': [
+                "Identify trends",
+                "Find growth opportunities",
+                "Understand customer segments"
+            ]
         }
     )
     
-    if result.success:
-        print(f"\n✓ Document generated successfully")
-        print(f"  Quality Score: {result.quality_score}")
-        print(f"  Iterations: {result.iterations}")
+    analysis_result = await analysis_agent.execute(analysis_task)
     
-    # Test citation agent directly
-    print("\n" + "="*50)
-    print("Testing Citation Agent...")
+    if analysis_result.success:
+        print("\nAnalysis Plan:")
+        print(analysis_result.data['analysis_plan'][:500] + "...")
     
-    citation_task = Task(
-        task_id="citation_test",
-        task_type="citation",
-        payload={
-            'sources': [
-                {
-                    'type': 'journal',
-                    'authors': ['Smith, J.', 'Doe, A.'],
-                    'title': 'Advances in Solar Technology',
-                    'journal': 'Renewable Energy Journal',
-                    'year': 2023,
-                    'volume': 45,
-                    'pages': '120-135'
-                }
-            ],
-            'style': 'APA'
-        },
-        context={}
+    # Test summarization agent
+    print("\n2. Testing Summarization Agent...")
+    long_text = """Artificial intelligence (AI) has emerged as one of the most transformative
+    technologies of the 21st century, revolutionizing industries from healthcare to finance.
+    Machine learning, a subset of AI, enables systems to learn from data and improve their
+    performance without explicit programming. Deep learning, using neural networks with
+    multiple layers, has achieved remarkable success in image recognition, natural language
+    processing, and game playing. However, challenges remain in areas such as explainability,
+    bias mitigation, and ethical considerations. The future of AI promises even greater
+    advances, but also requires careful consideration of societal impacts."""
+    
+    summary_task = Task(
+        id="task_2",
+        type="summarization",
+        data={
+            'content': long_text,
+            'summary_length': 'short',
+            'format': 'bullet'
+        }
     )
     
-    citation_result = await citation_agent.handle_task(citation_task)
-    print(f"\n✓ Citations generated:")
-    print(citation_result.output['bibliography'])
+    summary_result = await summarization_agent.execute(summary_task)
     
-    # Test SEO agent directly
+    if summary_result.success:
+        print("\nSummary:")
+        print(summary_result.data['summary'])
+    
+    # Show metrics
     print("\n" + "="*50)
-    print("Testing SEO Agent...")
-    
-    seo_task = Task(
-        task_id="seo_test",
-        task_type="seo",
-        payload={
-            'content': result.content if result.success else "Sample content about renewable energy...",
-            'keywords': ['renewable energy', 'solar power', 'sustainability'],
-            'apply_optimizations': False
-        },
-        context={}
-    )
-    
-    seo_result = await seo_agent.handle_task(seo_task)
-    print(f"\n✓ SEO Score: {seo_result.metadata['seo_score']}")
-    print(f"✓ Recommendations: {len(seo_result.output['recommendations'])}")
-    
-    # Cleanup
-    await orchestrator.shutdown()
-    print("\n✓ Complete")
+    print("Agent Metrics:")
+    print("="*50)
+    for agent_name, agent in [("Data Analysis", analysis_agent), ("Summarization", summarization_agent)]:
+        metrics = agent.get_metrics()
+        print(f"\n{agent_name}:")
+        print(f"  State: {metrics['state']}")
+        print(f"  Completed: {metrics['metrics']['tasks_completed']}")
+        print(f"  Failed: {metrics['metrics']['tasks_failed']}")
 
 
 if __name__ == "__main__":
