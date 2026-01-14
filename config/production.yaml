@@ -1,0 +1,57 @@
+# Production configuration for Multi-Agent Document Framework
+
+orchestrator:
+  max_agents: 20
+  timeout: 600
+  quality_threshold: 0.90
+  enable_parallel: true
+  max_concurrent_tasks: 10
+  retry_attempts: 5
+
+agents:
+  research:
+    provider: "openai"
+    model: "gpt-4-turbo"
+    temperature: 0.3
+    max_tokens: 8000
+    timeout: 180
+    max_retries: 5
+    cache_enabled: true
+  
+  writing:
+    provider: "openai"
+    model: "gpt-4-turbo"
+    temperature: 0.7
+    max_tokens: 16000
+    timeout: 300
+    max_retries: 5
+    cache_enabled: true
+  
+  editing:
+    provider: "openai"
+    model: "gpt-4"
+    temperature: 0.5
+    max_tokens: 16000
+    timeout: 180
+    max_retries: 5
+    cache_enabled: true
+  
+  verification:
+    provider: "openai"
+    model: "gpt-4"
+    temperature: 0.2
+    max_tokens: 8000
+    timeout: 180
+    max_retries: 5
+    cache_enabled: true
+
+quality:
+  min_score: 0.85
+  verification_depth: "comprehensive"
+  fact_check: true
+  require_sources: true
+
+logging:
+  level: "INFO"
+  file: "logs/madf-production.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

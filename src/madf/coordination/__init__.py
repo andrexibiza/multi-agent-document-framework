@@ -1,9 +1,16 @@
-"""
-Coordination subsystem for agent communication and state management.
-"""
+"""Coordination layer modules."""
 
-from madf.coordination.message_bus import MessageBus
-from madf.coordination.state_manager import StateManager
-from madf.coordination.protocol import CommunicationProtocol
+from .workflow import WorkflowManager, Workflow, Stage, WorkflowBuilder
+from .message_bus import MessageBus, Message, MessageType
+from .resource_manager import ResourceManager
 
-__all__ = ['MessageBus', 'StateManager', 'CommunicationProtocol']
+__all__ = [
+    "WorkflowManager",
+    "Workflow",
+    "Stage",
+    "WorkflowBuilder",
+    "MessageBus",
+    "Message",
+    "MessageType",
+    "ResourceManager",
+]
