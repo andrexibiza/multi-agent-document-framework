@@ -1,0 +1,51 @@
+# Multi-Agent Document Framework Configuration Example
+
+framework:
+  name: "Multi-Agent Document Framework"
+  version: "1.0.0"
+
+# Agent configuration
+agents:
+  default_model: "gpt-4"
+  timeout: 300  # seconds
+  max_retries: 3
+  temperature: 0.7
+  max_tokens: 2000
+
+# Coordinator settings
+coordinator:
+  max_concurrent_agents: 5
+  collaboration_mode: "sequential"  # Options: sequential, parallel, pipeline, collaborative
+  enable_feedback_loops: true
+  max_iterations: 3
+
+# Verification system
+verification:
+  enabled: true
+  min_quality_score: 0.8
+  checks:
+    - factual_accuracy
+    - consistency
+    - completeness
+    - grammar
+    - style
+    - citations
+
+# Document management
+document:
+  default_format: "markdown"  # Options: markdown, json, html
+  auto_save: true
+  versioning: true
+  output_directory: "output"
+
+# Logging configuration
+logging:
+  level: "INFO"  # Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+  file: "logs/framework.log"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+
+# Custom settings (example)
+custom:
+  organization: "My Organization"
+  project_name: "Document Automation"
+  enable_analytics: true
