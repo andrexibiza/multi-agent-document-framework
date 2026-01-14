@@ -1,617 +1,575 @@
 # API Reference
 
-Complete API documentation for the Multi-Agent Document Framework.
-
 ## Core Classes
 
-### Agent
+### DocumentOrchestrator
 
-Base class for all agents in the framework.
-
-#### Constructor
+Main orchestrator for coordinating multi-agent document creation.
 
 ```python
-Agent(
-    agent_id: Optional[str] = None,
-    role: str = "custom",
-    capabilities: Optional[List[str]] = None,
-    model: str = "gpt-4",
-    temperature: float = 0.7,
-    max_tokens: int = 2000,
-    system_prompt: Optional[str] = None
-)
+class DocumentOrchestrator:
+    def __init__(self,
+                 agents: Dict[str, BaseAgent],
+                 config: Optional[OrchestratorConfig] = None)
 ```
 
-**Parameters**:
-- `agent_id`: Unique identifier (generated if not provided)
-- `role`: Agent role (researcher, writer, editor, etc.)
-- `capabilities`: List of agent capabilities
-- `model`: LLM model to use
-- `temperature`: Randomness in outputs (0.0-1.0)
-- `max_tokens`: Maximum response length
-- `system_prompt`: Custom system prompt
+**Parameters:**
+- `agents`: Dictionary mapping agent roles to agent instances
+- `config`: Orchestrator configuration (optional)
 
-**Example**:
+**Methods:**
+
+#### create_document
+
 ```python
-agent = Agent(
-    role="researcher",
-    capabilities=["web_search", "data_analysis"],
-    model="gpt-4"
-)
+async def create_document(self,
+                         topic: str,
+                         requirements: Dict[str, Any]) -> DocumentResult
 ```
 
-#### Methods
+Create a document using multi-agent collaboration.
 
-##### execute_task
+**Parameters:**
+- `topic` (str): Main topic/subject of the document
+- `requirements` (Dict[str, Any]): Document requirements including:
+  - `length`: Target word count (e.g., "2000-3000 words")
+  - `tone`: Writing tone (e.g., "professional", "casual")
+  - `style`: Writing style (e.g., "technical", "narrative")
+  - `target_audience`: Intended audience
+  - `include_citations`: Whether to include citations (bool)
+  - Other custom requirements
 
+**Returns:**
+- `DocumentResult`: Object containing generated document and metadata
+
+**Example:**
 ```python
-async execute_task(task: AgentTask) -> Dict[str, Any]
-```
+orchestrator = DocumentOrchestrator(agents=agents, config=config)
 
-Execute a task assigned to this agent.
-
-**Parameters**:
-- `task`: AgentTask object containing task details
-
-**Returns**: Dictionary with task result and metadata
-
-**Example**:
-```python
-task = AgentTask(
-    task_id="task_001",
-    description="Research AI trends",
-    requirements={"depth": "comprehensive"}
-)
-
-result = await agent.execute_task(task)
-print(result["content"])
-```
-
-##### send_message
-
-```python
-send_message(message: AgentMessage) -> None
-```
-
-Send a message to another agent.
-
-##### receive_message
-
-```python
-receive_message(message: AgentMessage) -> None
-```
-
-Receive a message from another agent.
-
-##### get_status
-
-```python
-get_status() -> Dict[str, Any]
-```
-
-Get current agent status and statistics.
-
-**Returns**: Dictionary with agent status information
-
-**Example**:
-```python
-status = agent.get_status()
-print(f"Completed tasks: {status['completed_tasks']}")
-```
-
----
-
-### Coordinator
-
-Orchestrates multi-agent workflows.
-
-#### Constructor
-
-```python
-Coordinator(
-    agents: List[Agent],
-    workflow_mode: WorkflowMode = WorkflowMode.SEQUENTIAL,
-    verification_system: Optional[VerificationSystem] = None,
-    max_iterations: int = 3,
-    config: Optional[Config] = None
-)
-```
-
-**Parameters**:
-- `agents`: List of agents to coordinate
-- `workflow_mode`: Execution mode (SEQUENTIAL, PARALLEL, etc.)
-- `verification_system`: Optional verification system
-- `max_iterations`: Maximum refinement iterations
-- `config`: Configuration object
-
-**Example**:
-```python
-coordinator = Coordinator(
-    agents=[researcher, writer, editor],
-    workflow_mode=WorkflowMode.SEQUENTIAL,
-    max_iterations=3
-)
-```
-
-#### Methods
-
-##### create_document
-
-```python
-create_document(
-    topic: str,
-    requirements: Dict[str, Any],
-    workflow_steps: Optional[List[Dict[str, Any]]] = None
-) -> Document
-```
-
-Create a document using multi-agent collaboration (synchronous).
-
-**Parameters**:
-- `topic`: Document topic/title
-- `requirements`: Document requirements dictionary
-- `workflow_steps`: Optional custom workflow steps
-
-**Returns**: Completed Document object
-
-**Example**:
-```python
-document = coordinator.create_document(
-    topic="AI in Healthcare",
+result = await orchestrator.create_document(
+    topic="Artificial Intelligence in Healthcare",
     requirements={
-        "length": "2000 words",
-        "style": "technical",
-        "sections": ["Introduction", "Applications", "Challenges"]
+        "length": "2000-3000 words",
+        "tone": "professional",
+        "target_audience": "healthcare professionals",
+        "include_citations": True
     }
 )
 ```
 
-##### create_document_async
+#### get_agent_metrics
 
 ```python
-async create_document_async(
-    topic: str,
-    requirements: Dict[str, Any],
-    workflow_steps: Optional[List[Dict[str, Any]]] = None
-) -> Document
+def get_agent_metrics(self) -> Dict[str, AgentMetrics]
 ```
 
-Create a document using multi-agent collaboration (asynchronous).
+Get performance metrics from all agents.
 
-**Example**:
-```python
-document = await coordinator.create_document_async(
-    topic="AI in Healthcare",
-    requirements={...}
-)
-```
+**Returns:**
+- `Dict[str, AgentMetrics]`: Metrics for each agent
 
-##### get_workflow_status
+#### shutdown
 
 ```python
-get_workflow_status() -> Dict[str, Any]
+async def shutdown(self)
 ```
 
-Get current workflow status and statistics.
+Gracefully shutdown orchestrator and cleanup resources.
 
 ---
 
-### Document
+### OrchestratorConfig
 
-Represents a document being created.
-
-#### Constructor
-
-```python
-Document(
-    title: str,
-    document_id: Optional[str] = None,
-    requirements: Optional[Dict[str, Any]] = None
-)
-```
-
-#### Properties
-
-- `word_count`: Total word count (read-only)
-- `section_count`: Number of sections (read-only)
-
-#### Methods
-
-##### add_section
-
-```python
-add_section(
-    title: str,
-    content: str,
-    order: Optional[int] = None,
-    metadata: Optional[Dict[str, Any]] = None
-) -> Section
-```
-
-Add a new section to the document.
-
-**Example**:
-```python
-section = document.add_section(
-    title="Introduction",
-    content="This paper explores...",
-    metadata={"author": "researcher_01"}
-)
-```
-
-##### update_section
-
-```python
-update_section(section_id: str, content: str) -> bool
-```
-
-Update content of an existing section.
-
-##### remove_section
-
-```python
-remove_section(section_id: str) -> bool
-```
-
-Remove a section from the document.
-
-##### create_version
-
-```python
-create_version(change_description: str, created_by: str = "system") -> DocumentVersion
-```
-
-Create a new version snapshot.
-
-**Example**:
-```python
-version = document.create_version(
-    change_description="Added conclusion section",
-    created_by="editor_01"
-)
-```
-
-##### to_markdown
-
-```python
-to_markdown() -> str
-```
-
-Export document as Markdown.
-
-##### to_json
-
-```python
-to_json() -> str
-```
-
-Export document as JSON.
-
----
-
-### DocumentManager
-
-Manager for document lifecycle.
-
-#### Methods
-
-##### create_document
-
-```python
-create_document(
-    title: str,
-    requirements: Optional[Dict[str, Any]] = None
-) -> Document
-```
-
-Create and register a new document.
-
-##### get_document
-
-```python
-get_document(document_id: str) -> Optional[Document]
-```
-
-Retrieve a document by ID.
-
-##### list_documents
-
-```python
-list_documents() -> List[Document]
-```
-
-List all managed documents.
-
-##### finalize_document
-
-```python
-finalize_document(document: Document) -> None
-```
-
-Mark document as final and create version snapshot.
-
-##### export_document
-
-```python
-export_document(
-    document_id: str,
-    format: str = "markdown"
-) -> Optional[str]
-```
-
-Export document in specified format.
-
-**Example**:
-```python
-markdown_content = manager.export_document(
-    document_id="doc_123",
-    format="markdown"
-)
-```
-
----
-
-### VerificationSystem
-
-Comprehensive document verification.
-
-#### Constructor
-
-```python
-VerificationSystem(
-    checks: Optional[List[str]] = None,
-    min_overall_score: float = 0.8
-)
-```
-
-**Parameters**:
-- `checks`: List of checks to enable (quality, factual_accuracy, consistency, etc.)
-- `min_overall_score`: Minimum score to pass verification
-
-**Example**:
-```python
-verification = VerificationSystem(
-    checks=["quality", "factual_accuracy", "consistency"],
-    min_overall_score=0.85
-)
-```
-
-#### Methods
-
-##### verify
-
-```python
-verify(document: Document) -> VerificationResult
-```
-
-Verify a document against all enabled checks.
-
-**Returns**: VerificationResult with score and issues
-
-**Example**:
-```python
-result = verification.verify(document)
-if result.passed:
-    print("Document passed verification!")
-else:
-    print(f"Found {len(result.issues)} issues")
-    for issue in result.issues:
-        print(f"- {issue.description}")
-```
-
-##### get_verification_report
-
-```python
-get_verification_report(result: VerificationResult) -> str
-```
-
-Generate human-readable verification report.
-
----
-
-### Config
-
-Configuration management.
-
-#### Class Methods
-
-##### from_yaml
-
-```python
-@classmethod
-from_yaml(cls, file_path: str) -> Config
-```
-
-Load configuration from YAML file.
-
-**Example**:
-```python
-config = Config.from_yaml("config.yaml")
-```
-
-##### from_dict
-
-```python
-@classmethod
-from_dict(cls, config_dict: Dict[str, Any]) -> Config
-```
-
-Create configuration from dictionary.
-
-#### Methods
-
-##### to_yaml
-
-```python
-to_yaml(file_path: str) -> None
-```
-
-Save configuration to YAML file.
-
-##### setup_logging
-
-```python
-setup_logging() -> None
-```
-
-Configure logging based on settings.
-
----
-
-## Enumerations
-
-### AgentRole
-
-```python
-class AgentRole(Enum):
-    RESEARCHER = "researcher"
-    WRITER = "writer"
-    EDITOR = "editor"
-    FACT_CHECKER = "fact_checker"
-    REVIEWER = "reviewer"
-    ANALYST = "analyst"
-    FORMATTER = "formatter"
-    TRANSLATOR = "translator"
-    CUSTOM = "custom"
-```
-
-### AgentCapability
-
-```python
-class AgentCapability(Enum):
-    WEB_SEARCH = "web_search"
-    DATA_ANALYSIS = "data_analysis"
-    CONTENT_CREATION = "content_creation"
-    PROOFREADING = "proofreading"
-    FACT_VERIFICATION = "fact_verification"
-    STYLE_IMPROVEMENT = "style_improvement"
-    # ... more capabilities
-```
-
-### WorkflowMode
-
-```python
-class WorkflowMode(Enum):
-    SEQUENTIAL = "sequential"
-    PARALLEL = "parallel"
-    PIPELINE = "pipeline"
-    COLLABORATIVE = "collaborative"
-```
-
----
-
-## Data Classes
-
-### AgentTask
+Configuration for document orchestrator.
 
 ```python
 @dataclass
-class AgentTask:
+class OrchestratorConfig:
+    max_iterations: int = 3
+    quality_threshold: float = 0.85
+    enable_verification: bool = True
+    enable_parallel_processing: bool = True
+    timeout_seconds: int = 600
+    research_timeout: int = 120
+    writing_timeout: int = 180
+    editing_timeout: int = 120
+    verification_timeout: int = 60
+    enable_caching: bool = True
+    log_level: str = "INFO"
+```
+
+**Fields:**
+- `max_iterations`: Maximum workflow iterations for quality improvement
+- `quality_threshold`: Minimum quality score to accept (0-1)
+- `enable_verification`: Enable quality verification
+- `enable_parallel_processing`: Enable parallel agent execution
+- `timeout_seconds`: Overall workflow timeout
+- `research_timeout`: Research agent timeout
+- `writing_timeout`: Writing agent timeout
+- `editing_timeout`: Editing agent timeout
+- `verification_timeout`: Verification agent timeout
+- `enable_caching`: Enable result caching
+- `log_level`: Logging level
+
+---
+
+## Agent Classes
+
+### BaseAgent
+
+Abstract base class for all agents.
+
+```python
+class BaseAgent(ABC):
+    def __init__(self,
+                 name: str,
+                 model: str,
+                 config: Optional[Dict[str, Any]] = None)
+```
+
+**Methods:**
+
+#### process
+
+```python
+@abstractmethod
+async def process(self, task: Task) -> Result
+```
+
+Process a task and return result. Must be implemented by subclasses.
+
+#### handle_task
+
+```python
+async def handle_task(self, task: Task) -> Result
+```
+
+Main task handling with error handling and metrics tracking.
+
+#### get_metrics
+
+```python
+def get_metrics(self) -> AgentMetrics
+```
+
+Return current performance metrics.
+
+---
+
+### ResearchAgent
+
+Agent specialized in information gathering and research.
+
+```python
+class ResearchAgent(BaseAgent):
+    def __init__(self,
+                 model: str = "gpt-4",
+                 config: Optional[Dict[str, Any]] = None)
+```
+
+**Configuration Options:**
+- `temperature`: LLM temperature (default: 0.3)
+- `max_sources`: Maximum number of sources to use
+- `search_api_key`: API key for search service
+- `source_types`: List of acceptable source types
+
+**Expected Task Payload:**
+```python
+{
+    "topic": str,
+    "requirements": {
+        "depth": "basic" | "intermediate" | "advanced",
+        "focus_areas": List[str],
+        "required_sources": int,
+        "source_types": List[str]
+    }
+}
+```
+
+**Output:**
+```python
+{
+    "key_facts": List[str],
+    "sources": List[Dict],
+    "themes": List[str],
+    "context": Dict
+}
+```
+
+---
+
+### WritingAgent
+
+Agent specialized in content creation and document writing.
+
+```python
+class WritingAgent(BaseAgent):
+    def __init__(self,
+                 model: str = "gpt-4",
+                 config: Optional[Dict[str, Any]] = None)
+```
+
+**Expected Task Payload:**
+```python
+{
+    "research_context": Dict,
+    "requirements": {
+        "length": str,
+        "tone": str,
+        "style": str,
+        "target_audience": str,
+        "structure": Optional[List[str]]
+    }
+}
+```
+
+**Output:**
+```python
+{
+    "document": str,
+    "outline": Dict,
+    "word_count": int
+}
+```
+
+---
+
+### EditingAgent
+
+Agent specialized in document editing and refinement.
+
+```python
+class EditingAgent(BaseAgent):
+    def __init__(self,
+                 model: str = "gpt-4",
+                 config: Optional[Dict[str, Any]] = None)
+```
+
+**Expected Task Payload:**
+```python
+{
+    "document": str,
+    "requirements": {
+        "tone": str,
+        "style_guide": Optional[str],
+        "readability_target": Optional[str],
+        "preserve_structure": bool
+    }
+}
+```
+
+**Output:**
+```python
+{
+    "edited_document": str,
+    "changes": List[Dict]
+}
+```
+
+---
+
+### VerificationAgent
+
+Agent specialized in document verification and quality assurance.
+
+```python
+class VerificationAgent(BaseAgent):
+    def __init__(self,
+                 model: str = "gpt-4",
+                 config: Optional[Dict[str, Any]] = None)
+```
+
+**Expected Task Payload:**
+```python
+{
+    "document": str,
+    "research_context": Dict,
+    "requirements": Dict,
+    "quality_threshold": float
+}
+```
+
+**Output:**
+```python
+{
+    "overall_score": float,
+    "passes_threshold": bool,
+    "fact_check": Dict,
+    "quality_check": Dict,
+    "consistency_check": Dict,
+    "feedback": Optional[Dict]
+}
+```
+
+---
+
+## Data Models
+
+### Task
+
+Task definition for agent processing.
+
+```python
+@dataclass
+class Task:
     task_id: str
-    description: str
-    requirements: Dict[str, Any]
-    status: str = "pending"
-    result: Optional[Any] = None
+    task_type: str
+    payload: Dict[str, Any]
+    context: Dict[str, Any]
+    priority: int = 0
+    timeout: Optional[float] = None
+    created_at: datetime = field(default_factory=datetime.now)
 ```
 
-### Section
+### Result
+
+Result of agent processing.
 
 ```python
 @dataclass
-class Section:
-    title: str
-    content: str
-    section_id: str
-    order: int = 0
-    subsections: List['Section'] = field(default_factory=list)
-    metadata: Dict[str, Any] = field(default_factory=dict)
-```
-
-### VerificationResult
-
-```python
-@dataclass
-class VerificationResult:
-    check_name: str
-    passed: bool
-    score: float  # 0.0 to 1.0
-    issues: List[VerificationIssue]
+class Result:
+    task_id: str
+    success: bool
+    output: Any
     metadata: Dict[str, Any]
+    metrics: Dict[str, Any]
+    errors: Optional[List[str]] = None
+    completed_at: datetime = field(default_factory=datetime.now)
+```
+
+### DocumentResult
+
+Result of document creation.
+
+```python
+@dataclass
+class DocumentResult:
+    document_id: str
+    success: bool
+    content: str
+    quality_score: float
+    iterations: int
+    metadata: Dict[str, Any]
+    metrics: Dict[str, Any]
+    errors: Optional[List[str]] = None
+    created_at: datetime = field(default_factory=datetime.now)
+```
+
+### AgentMetrics
+
+Performance metrics for an agent.
+
+```python
+@dataclass
+class AgentMetrics:
+    tasks_completed: int = 0
+    tasks_failed: int = 0
+    total_processing_time: float = 0.0
+    total_tokens_used: int = 0
+    average_quality_contribution: float = 0.0
+    last_activity: Optional[datetime] = None
 ```
 
 ---
 
-## Complete Example
+## Coordination System
+
+### MessageBus
+
+Asynchronous message bus for agent communication.
 
 ```python
-import asyncio
-from multi_agent_framework import (
-    Agent, Coordinator, Config,
-    VerificationSystem, WorkflowMode
-)
-
-# Load configuration
-config = Config.from_yaml("config.yaml")
-config.setup_logging()
-
-# Create agents
-agents = [
-    Agent(
-        role="researcher",
-        capabilities=["web_search", "literature_review"],
-        model="gpt-4"
-    ),
-    Agent(
-        role="writer",
-        capabilities=["content_creation", "technical_writing"],
-        model="gpt-4"
-    ),
-    Agent(
-        role="editor",
-        capabilities=["proofreading", "style_improvement"],
-        model="gpt-4"
-    )
-]
-
-# Setup verification
-verification = VerificationSystem(
-    checks=["quality", "factual_accuracy", "consistency"],
-    min_overall_score=0.85
-)
-
-# Create coordinator
-coordinator = Coordinator(
-    agents=agents,
-    workflow_mode=WorkflowMode.SEQUENTIAL,
-    verification_system=verification,
-    max_iterations=3,
-    config=config
-)
-
-# Create document
-async def main():
-    document = await coordinator.create_document_async(
-        topic="The Future of AI",
-        requirements={
-            "length": "2000 words",
-            "style": "technical but accessible",
-            "sections": [
-                "Introduction",
-                "Current State",
-                "Future Trends",
-                "Conclusion"
-            ]
-        }
-    )
-    
-    print(f"Document created: {document.word_count} words")
-    print(f"Verification score: {document.verification_score}")
-    
-    # Export document
-    markdown = document.to_markdown()
-    with open("output.md", "w") as f:
-        f.write(markdown)
-
-# Run
-asyncio.run(main())
+class MessageBus:
+    def __init__(self)
 ```
+
+**Methods:**
+
+#### register_agent
+
+```python
+def register_agent(self, agent_name: str, agent: Any)
+```
+
+Register an agent with the message bus.
+
+#### send
+
+```python
+async def send(self,
+               sender: str,
+               recipient: str,
+               message_type: MessageType,
+               payload: Dict[str, Any],
+               priority: int = 0) -> Message
+```
+
+Send a message to a specific recipient.
+
+#### publish
+
+```python
+async def publish(self, message: Message)
+```
+
+Publish a message to the bus.
+
+#### subscribe
+
+```python
+def subscribe(self, topic: str, callback: Callable)
+```
+
+Subscribe to messages on a topic.
+
+---
+
+### StateManager
+
+Manages shared state across agents.
+
+```python
+class StateManager:
+    def __init__(self, backend: str = "memory")
+```
+
+**Methods:**
+
+#### create_document_state
+
+```python
+async def create_document_state(self,
+                               document_id: str,
+                               topic: str,
+                               requirements: Dict[str, Any],
+                               context: Dict[str, Any]) -> DocumentState
+```
+
+#### update_document_content
+
+```python
+async def update_document_content(self,
+                                 document_id: str,
+                                 content: str,
+                                 actor: str) -> bool
+```
+
+#### get_document_state
+
+```python
+async def get_document_state(self, document_id: str) -> Optional[DocumentState]
+```
+
+#### snapshot_state
+
+```python
+async def snapshot_state(self, document_id: str) -> Optional[Dict[str, Any]]
+```
+
+---
+
+## Workflows
+
+### WorkflowBuilder
+
+Builder for creating custom workflows.
+
+```python
+class WorkflowBuilder:
+    def __init__(self)
+```
+
+**Methods:**
+
+```python
+def add_stage(self, name: str, **kwargs) -> WorkflowBuilder
+def add_condition(self, name: str, **kwargs) -> WorkflowBuilder  
+def add_loop(self, max_iterations: int) -> WorkflowBuilder
+def build(self) -> Workflow
+```
+
+**Example:**
+```python
+workflow = WorkflowBuilder() \
+    .add_stage("research", parallel=True) \
+    .add_stage("writing") \
+    .add_stage("editing") \
+    .add_condition("quality_check", threshold=0.9) \
+    .add_stage("verification") \
+    .add_loop(max_iterations=3) \
+    .build()
+```
+
+---
+
+## Utilities
+
+### LLMWrapper
+
+Wrapper for LLM API integration.
+
+```python
+class LLMWrapper:
+    def __init__(self,
+                 model: str,
+                 temperature: float = 0.7,
+                 max_tokens: int = 2000)
+    
+    async def generate(self, prompt: str) -> str
+    async def generate_with_schema(self, prompt: str, schema: Dict) -> Dict
+    def get_token_count(self) -> int
+```
+
+---
+
+## Error Handling
+
+### Exception Classes
+
+```python
+class MADFException(Exception):
+    """Base exception for framework"""
+    pass
+
+class AgentException(MADFException):
+    """Agent-related errors"""
+    pass
+
+class WorkflowException(MADFException):
+    """Workflow execution errors"""
+    pass
+
+class VerificationException(MADFException):
+    """Verification failures"""
+    pass
+
+class TimeoutException(MADFException):
+    """Operation timeout"""
+    pass
+```
+
+---
+
+## Environment Variables
+
+```bash
+# LLM API Keys
+OPENAI_API_KEY=your_openai_key
+ANTHROPIC_API_KEY=your_anthropic_key
+
+# Search API
+SEARCH_API_KEY=your_search_key
+
+# Configuration
+MADF_LOG_LEVEL=INFO
+MADF_ENABLE_CACHE=true
+MADF_CACHE_TTL=3600
+
+# Performance
+MADF_MAX_CONCURRENT_AGENTS=10
+MADF_DEFAULT_TIMEOUT=600
+```
+
+---
+
+For more examples and detailed usage, see the [examples](../examples/) directory.
